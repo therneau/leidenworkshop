@@ -1,0 +1,187 @@
+\documentclass{article}[11pt]
+\usepackage{amsmath}
+\addtolength{\textwidth}{1in}
+\addtolength{\oddsidemargin}{-.5in}
+\setlength{\evensidemargin}{\oddsidemargin}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\title{Introductions}
+\author{Terry Therneau}
+\date{25 Sept 2024}
+
+\begin{document}
+\maketitle
+
+<<setup, echo=FALSE>>=
+library(knitr)
+library(survival)
+library(splines)
+opts_chunk$set(comment=NA, tidy=FALSE, highlight=FALSE, echo=TRUE,
+               fig.width=4.5, fig.height=3, fig.path="figures/",
+               device="pdf", dev.args=list(pointsize=8),
+               cache=FALSE,   background="#ffffff",
+               prompt=TRUE, 
+               strip.white=FALSE, mymar=TRUE)
+options(contrasts= c("contr.treatment", "contr.poly"),
+        show.signif.stars = FALSE, continue=" ", width=65)
+
+# because "mymar" is set to TRUE above, this hook will be run on every chunk.
+# it sets the margins, font, etc to values that work
+knit_hooks$set(mymar= function(before, options, envir) {
+    if (before) {
+        look.for <- c("mar", "font", "cex")  # options we want
+        plist <- options[match(look.for, names(options), nomatch=0)]
+        if (is.null(plist$mar)) plist$mar <- c(4, 4, .5, .5)
+        if (is.null(plist$cex)) plist$cex <- 1
+        do.call("par", plist)
+    } else NULL
+})
+@
+
+\section{Introduction}
+\begin{itemize}
+  \item Mayo Clinic is a teriary care center, so the majority of medical 
+    questions that have come to me are ``how long until'': waiting time on the
+    liver transplant list, mild cognitive impairment (MCI) and dementia, 
+    duration of physical therapy rehabilitation after a stroke, accumulation
+    of metabolic comorbidities, etc.
+  \item I work in support of medical research, only.
+  \item Every feature in the survival package is a response to a research
+    question that I have faced. 
+  \item My goal here is to trade ideas and to learn.
+  \item Class materials on gihub.com/therneau/leidenworkshop.
+\end{itemize}
+
+\begin{itemize}
+  \item{History}
+    \begin{itemize}
+      \item 1975, BA St. Olaf College
+      \item 1976-79 programmer
+      \item 1979-83 PhD, Stanford
+      \item 1983-85 Asst Professor
+      \item 1985-24 Mayo Clinic
+    \end{itemize}
+  \item Languages
+    \begin{itemize}
+      \item main: Fortran, Basic, Focal, APL, PL/I, C, awk, lex, yacc, assembler*4
+      \item stat: BMDP, SAS S, Splus, R, (minitab, SPSS, matlab)
+      \item OS: IBM 11/30, RSTS, TOPS20, JCL, Wylbur, CMS, Unix (Bell, Berkeley, Sun, Linux), Windows
+      \item code: Panvalet, SCCS, rcs, cvs, svn, mercurial, git
+    \end{itemize}
+\end{itemize}
+        
+\section{Models}
+\begin{itemize} 
+  \item at each event time there is a drawing for the winner
+  \item each obs has $r_i = \exp(\eta)$ tickets
+  \item P(subject $i$ wins) = $r_i/ \sum_{at risk} r_j$
+\end{itemize}
+The three most popular models in statistics are
+\begin{itemize}
+   \item Linear: $E(y) = \beta_0 + \beta_1 x_1 + \beta_2 x_2 + \ldots$
+   \item GLM: $E(y) = g\left(\beta_0 + \beta_1 x_1 + \beta_2 x_2 + \ldots \right)$
+   \item Cox: $\lambda(t) = g\left(\beta_0(t) + \beta_1 x_1 + \beta_2 x_2 + \ldots \right)$
+   \item Why?  Simplicity.
+     \begin{itemize}
+       \item If `x1= weight`, then $\beta_1$ is \emph{THE} effect of weight, 
+         independent of any other variables in the model.
+       \item Statisticians like this.
+       \item Investigators really like this (a single p-value)
+     \end{itemize}
+   \item Generalized additive models will replace one of the $\beta x$ terms
+      with $s(x)$, but retain the separability.
+\end{itemize}
+
+I argue that successful statistical models have 4 attributes
+\begin{enumerate}
+  \item Simplicity: in the sense described above, leading to simple explanations
+    for the effect of key predictors.
+  \item Statistical validity: the model must describe the data adequately. ``All 
+models are wrong.  The practical question is whether a model is wrong enough to
+not be useful.'' George Box
+  \item Numerical stability: the code to fit a model does not require 
+    hand-holding or fiddling with tuning parameters: it just runs.
+  \item Speed
+\end{enumerate}
+
+The transform $g$ gets chosen to fit criteria 3; if it helps with criteria 2 
+that is mostly luck.  (It nearly always impedes interpretability).
+``The reason that casinos use odds is that no one really understands them.''
+The Cox model uses $g(\eta)= \exp(\eta)$ simply because it prevents negative
+values (the dead coming back to life).
+However, to my great surprise, the biology of this assumption often works out
+as well, see figures \ref{uspop} and \ref{hips1}.
+Do \emph{not} take this for granted.  
+
+\begin{figure}
+<<usdeath, echo=FALSE>>=
+matplot(60:100, 36525* survexp.us[61:101, 1:2, "2020"], col=2:1, lty=1, lwd=2,
+	xlab="Age", ylab="Death rate per 100", log='y', type='l', yaxt='n')
+#    main="US Death Rates")
+axis(2, c(1,2,5,10,20, 50), c(1,2,5,10, 20, 50), las=2)
+legend(65, 20, c("Male", "Female"), lty=1, lwd=2, col=2:1, bty='n')
+@
+  \caption{United States death rates by age and sex, 2020.}
+  \label{uspop}
+\end{figure}
+
+\begin{figure}
+\includegraphics{figures/mcsaplot1.pdf}
+\caption{Death and dementia rates from the Mayo Clinic Study if Aging.}
+\end{figure}
+
+\begin{figure}
+<<hips1, echo=FALSE>>=
+hips <- readRDS("data/hips.rds")
+dfit1 <- glm(event.f ~ ns(year, df=4) + ns(age, df=4) + offset(log(pop.f)),
+            quasipoisson, data=hips, subset=(age > 19 & age < 101 & pop.f > 0))
+dfit2 <- glm(event.m ~ ns(year, df=4) + ns(age, df=4) + offset(log(pop.m)),
+            quasipoisson, data=hips, subset=(age > 19 & age < 101 & pop.m > 0))
+dummy <- data.frame(year=1950, age=20:99, pop.f=1e5, pop.m= 1e5)
+yhat1 <- predict(dfit1, newdata=dummy, se.fit=TRUE)
+yhat2 <- predict(dfit2, newdata=dummy, se.fit=TRUE)
+
+yy <- cbind(yhat1$fit + outer(yhat1$se.fit, c(0, -1.96, 1.96), '*'),
+            yhat2$fit + outer(yhat2$se.fit, c(0, -1.96, 1.96), '*'))
+matplot(20:99, exp(yy), log='y', type='l',col=c(1,1,1,2,2,2), lwd=2, 
+        lty=c(1,2,2), yaxt='n', ylim=c(.2, max(exp(yy))), 
+        ylab="Rate per 100,000", xlab="Age")
+#        main="Hip fracture, Olmsted County, 1929- 1992")
+ylab=c(1,5, 50, 500, 5000)
+axis(2, ylab, as.character(ylab), las=2)
+legend(40, 1000, c("Female", "Male"), lty=1, lwd=2, col=1:2, bty='n')
+abline(v=35, lty=2, col='grey')
+@
+  \caption{Hip fracture rates in Olmsted County, Minnesota, 1929-1992.}
+  \label{hips1}
+\end{figure}
+
+Figure \ref{hips2} shows that the year effect is not as simple.
+\begin{figure}
+<<hips2, echo=FALSE>>=
+dummy2 <- data.frame(year=1929:1992, age=70, pop.f=1e5, pop.m= 1e5)
+yhat3 <- predict(dfit1, newdata=dummy2, se.fit=TRUE)
+yhat4 <- predict(dfit2, newdata=dummy2, se.fit=TRUE)
+
+yy2 <- cbind(yhat3$fit + outer(yhat3$se.fit, c(0, -1.96, 1.96), '*'),
+             yhat4$fit + outer(yhat4$se.fit, c(0, -1.96, 1.96), '*'))
+matplot(1929:1992, exp(yy2), log='y', type='l',col=c(1,1,1,2,2,2), lwd=2, 
+        lty=c(1,2,2),
+        ylab="Rate per 100,000", xlab="Year")
+@ 
+  \caption{Hip fracture rates in Olmsted County, Minnesota by year.}
+  \label{hips2}
+\end{figure}
+
+<<dfit3>>=
+hip2 <- with(hips, data.frame(year=rep(year,2), age= rep(age, 2),
+                              pop= c(pop.f, pop.m),
+                              count= c(event.f, event.m),
+                              male= rep(0:1, each= nrow(hips))))
+gfit <- glm(count ~ year + age + offset(log(pop)), family= poisson,
+            data=hip2, subset= (age >39 & age <101 & year>1949 & pop>0))
+summary(gfit)
+
+@ 
+\end{document}
+

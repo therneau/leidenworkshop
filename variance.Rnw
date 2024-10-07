@@ -1,0 +1,237 @@
+\documentclass{article}[12pt]
+\usepackage{amsmath}
+\addtolength{\textwidth}{1in}
+\addtolength{\oddsidemargin}{-.5in}
+\setlength{\evensidemargin}{\oddsidemargin}
+\newcommand{\Cvar}{{\cal I}^{-1}}
+\newcommand{\code}[1]{\texttt{#1}}
+\title{Variance in the survival package}
+\author{Terry Therneau}
+\date{30 Sept 2024}
+
+\begin{document}
+
+\maketitle
+
+<<echo=FALSE>>=
+opts_chunk$set(comment=NA, tidy=FALSE, highlight=FALSE, echo=FALSE,
+               fig.width=4.5, fig.height=3, fig.path="figures/",
+               device="pdf", dev.args=list(pointsize=8),
+               cache=FALSE,   background="#ffffff",
+               warning=FALSE, error=FALSE, message=FALSE, prompt=TRUE,
+               strip.white=FALSE)
+options(contrasts= c("contr.treatment", "contr.poly"),
+        show.signif.stars = FALSE, continue=" ", width=65)
+@ 
+
+\section{Infinitesimal jackknife}
+\subsection{Definition}
+If $\theta$ is a statistic that depends on a set of observations, then
+\begin{align*}
+  J_{(i)} &= (\theta - \theta_{-i}) \\
+  V_J &= \frac{n-1}{n} \sum_i (J_{(i)} - \overline J)^2
+\end{align*}
+are the jackknife values and the jackknife estimate of variance,
+respectively, where $-i$ denotes the estimate computed without observation
+$i$.
+
+The infinitesimal jackknife (IJ) values and IJ estimate of variance 
+are defined as 
+\begin{align*}
+ \mathcal{J}_{(i)} &=  \left.\frac{\partial \beta_j}{\partial w_i}\right|_{w=1} \\
+ V_{\mathcal{J}} &=   \sum \mathcal{J}^2_{(i)}
+\end{align*}
+ 
+An underlying idea is that the IJ is a first order Taylor series
+approximation to the jackknife.  When $n>20$ and there are no large leverage
+points, the approximation is often very good. 
+Within the survival package, we can often compute the IJ in $O(n)$ time, versus
+$O(n^2)$ for the jackknife.
+One ancillary but useful property of the IJ values is that they sum to zero.
+In terms of the sign, the survival package takes the view that if adding
+observation $i$ increase the statistic, then the IJ leverage is positive.
+
+If there are multiple observations per subject then one can use the grouped
+jackknife or grouped IJ, simply sum the values with group before adding
+up the squares.  
+Say subject Smith has observations 8--10 in the data set, perhaps due to a 
+time-dependent covariate.  Then for the code
+
+<<echo=TRUE, eval=FALSE>>=
+coxfit <- coxph(Surv(time1, time2, status) ~ x1 + x2 + x3, mydata, id=clinic)
+D1 = resid(coxfit, type="dfbeta")
+D2 = resid(coxfit, type="dfbeta", collapse=TRUE) 
+@ 
+
+D1 will have one row per observation, D2 will have one row per clinic number =
+sum of rows for that subject. D2'D2 is the grouped IJ variance estimate.
+This is the default variance when a survfit or coxph call contains
+an \code{id} or \code{cluster} statement.
+
+\subsection{Formal}
+The detailed formulas can be found in formula.pdf. Let $W$ be a diagonal
+matrix of per observation case weights and $B$ be the grouping matrix
+($B$ = identity if there in one obs per subject)
+<<echo=TRUE, eval=FALSE>>=
+B <- model.matrix( ~ factor(id) -1, data=mydata)
+@ 
+$$
+ V = DWB'BWD
+$$
+
+For more complex sampling designs $B$ will be more complex, in that case
+use the survey package.
+
+\subsection{Replication weights versus sampling weights}
+A replication weight of 3 means that there are 3 observations that are identical,
+but we have compressed the data to save space.
+(This was still common when I began my computing career.)
+The weights statement in coxph, survreg, and survfit implements replication
+weights, by default.
+
+A sampling weight represents differential weighting and is often fractional.
+Examples are from survey samples, or IPW used to balance a study.
+An approximate variance can be obtained by rescaling so that $\sum w_i =n$
+and treating them as replication weights.  The more proper approach is an
+IJ variance.
+
+
+\section{History}
+Like many good statistical ideas the IJ has been rediscovered multiple times
+in the statistical literature and appeared under multplie names.
+Two common manifestations are White's standard
+error for the linear model (or Huber-White, or Eicker-Huber-White), the
+working independence variance estimate for a generalized estimating equation
+(GEE) model, and the Horvitz-Thompson in survey sampling.
+  Is is also called a sandwich estimate.
+
+The White estimate for a linear model is
+$$
+V = (X'X)^{-1} X' R^2 X (X'X)^{-1}
+$$
+where $R$ is a diagonal matrix of residuals.
+
+\section{Example}
+For the simple KM, let $e(s)$ and $n(s)$ be the number of events and the
+number at risk at time $s$, respectively.
+
+\begin{align*}
+  \lambda(s) &= \frac{e(s)}{n(s)} \\
+             &= \frac{\sum w_i dN_i(s)}{\sum w_i Y_i(s)} \\
+  S(t) &= \prod_{s \le t} [1- \lambda(s)] \\
+  \frac{\partial \lambda(s)}{\partial w_i} &= 
+        \frac{dN_i(s) - Y_i(s) \lambda(s)}{n(s)} \\
+  d_i(t) &= \frac{\partial \prod_{s \le t} 1- \lambda(s)}{\partial w_i} \\
+         &= \frac{\partial \exp(\log( \prod_{s le t} [1- \lambda(s)]))}}
+    {\partial w_i} \\
+         &= S(t)\sum_{s \le t} -\frac{dN_i(s) - Y_i(s) \lambda(s)}
+                           {n(s)[1- \lambda(s)]} \\
+  V(t) &= \sum_{i=1}^n d_i^2(t) \\
+       &= S^2(t) \sum_{s \le t} \frac{e(t)}{n(t)[n(t)- e(t)]}
+\end{align*}
+
+  
+The last step above is true if all weights =1 (simple KM) and $e(t)< n(t)$.
+
+\subsection{Future}
+
+In the survival package, the \code{resid} function is slowly expanding to
+deal with all the cases. 
+\begin{itemize}
+  \item Current:  
+    \begin{itemize}
+      \item coxph: coefficients
+      \item survreg: coefficients
+      \item KM and AJ: probability in state, cumulative hazard, sojourn
+    \end{itemize}
+  \item soon: survival, hazard, sojourn from coxph fit
+  \item someday: predicted curves from survreg
+\end{itemize}
+
+  \item survfit:  \code{resid(fit, times=, type= cumhaz / pstate / sojourn)}
+  \item coxph  :  \code{resid(fit, type='dfbeta')}
+\end{itemize}
+An optional collapse argument will return one row per id.
+
+The full IJ residual matrix for an Aalen-Johansen curve would have dimension
+(number of observations) x (number of event times) x (number of states).
+That from a post MSH curve will also have x (number of rows in newdata).
+This can get very large, very fast, so choose your time points carefully.
+
+Most estimands from a MSH can be based on the three primary outputs of hazard,
+probability in state, or sojourn. 
+This means that, at least in principle, a variance for an estimand $\theta$ 
+can be based on the IJ values.
+That is, first compute the influence of each observation on $\theta$ to get
+an appropriate $D$ matrix, than apply the standard formula above.
+How well this works in practice for various $\theta$ has not yet 
+been investigated.
+
+Computations to fit a MSH model are $O(2np) + O(dp^2)$ where $n$ is the number
+of observations, $d$ the number of events and $p$ the number of coefficients.
+Anything that is $O(n^2)$ or $O(nd)$ can be \emph{much} slower, so take care.
+A growing `methods' vignette in the package has many pages devoted to the 
+strategies I use to avoid this within the standard computations.
+IJ residuals have been a challenge.
+(SAS phreg has a leading term of $O(ndp)$ for (time, time2) data, BTW).
+
+Notes:
+
+1. For an ordinary KM, the IJ variance exactly equals the Greenwood variance.
+This was a big surprise.  Ann Eaton was able to prove it by induction.
+
+2. The AJ and post MSH curves are each a step function. 
+The sojourn time in state $k$ = area under the $p_k(t)$ curve 
+$$
+\mathcal{J}_i(AUC_k(t)) = \sum_{s \le t} \mathcal{J}_i(p_k(s)) \Delta(s)$$
+The naive algorithm that walks forward in time, udating each observation's
+IJ at each event time, will be $O(nd)$ and thus may be very slow.  
+How can we do this efficiently?
+
+3. One way to think of the $D$ matrix for a Cox model is to consider a
+Newton-Raphson update step near the solution.
+At the solution the NR step is 0, per below, where $U$ is the vector of
+first derivatives and $\cal I$ the information matrix.
+Modifiy the weight for observation $i$ slightly and compute the change in
+$\hat\beta$, this is line 2. 
+Others have pointed out that the derivative of $\cal I$ is of smaller order than
+the $dU$ term so we ignore it.
+ Finally dU/dw is a matrix with
+n rows, each containing the derivative of $U$ wrt weight $i$.
+
+\begin{align*}
+  0 &= U' \Cvar \\
+  \frac{\partial \beta}{\partial w_i} &= \frac{\partial U}{\partial w_i} \Cvar +
+  U \frac{\partial\Cvar}{\partial w_i} \\
+  D & \approx \frac{dU}{dw} \Cvar \\
+  D'D &\approx \Cvar \left[ \left(\frac{dU}{dw}\right)'\left(\frac{dU}{dw}
+    \right) \right] \Cvar
+\end{align*}
+
+The final line has the form of a sandwich estimate.  
+
+\section{Psuedovalues}
+The IJ pseudovalue is
+$$
+ n \mathcal{J}_i + \hat\theta
+$$
+If there is no censoring, the IJ pseudovalue from a KM is $t_i$, the original
+survival time.
+For censored data the pseudovalue computed at time $s$ can act as an 
+\emph{uncensored} representation of $\min(t_i, s)$ for each subject.
+For instance
+
+<<psuedo, echo=TRUE>>=
+sfit <- survfit(Surv(time, status) ~1, data=lung)
+ps <- pseudo(sfit, type="surv", time=365)  # 1 year survival
+hist(ps, nclass=25)
+
+pfit <- glm(ps ~ ph.ecog + sex, family= gaussian(link= blogit()), lung)
+summary(pfit)
+@ 
+
+See the \code{psuedo} command in the survival package.
+The pseudo library in R uses the standard jackknife, and is much slower.
+
+Psueudovalue regression appears to not be correct when there is delayed entry.
+\end{document}
