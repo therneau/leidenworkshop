@@ -22,6 +22,8 @@ opts_chunk$set(comment=NA, tidy=FALSE, highlight=FALSE, echo=FALSE,
                strip.white=FALSE)
 options(contrasts= c("contr.treatment", "contr.poly"),
         show.signif.stars = FALSE, continue=" ", width=65)
+library(survival)
+library(survey)
 @ 
 
 \section{Infinitesimal jackknife}
@@ -70,36 +72,37 @@ an \code{id} or \code{cluster} statement.
 
 \subsection{Formal}
 The detailed formulas can be found in formula.pdf. Let $W$ be a diagonal
-matrix of per observation case weights and $B$ be the grouping matrix
+matrix of per observation sampling weights and $B$ be the grouping matrix
 ($B$ = identity if there in one obs per subject)
 <<echo=TRUE, eval=FALSE>>=
 B <- model.matrix( ~ factor(id) -1, data=mydata)
 @ 
-$$
- V = DWB'BWD
-$$
+then
+\begin{equation}
+ V = DWB'BWD \label{ijvar}
+\end{equation}
 
 For more complex sampling designs $B$ will be more complex, in that case
 use the survey package.
 
 \subsection{Replication weights versus sampling weights}
 A replication weight of 3 means that there are 3 observations that are identical,
-but we have compressed the data to save space.
-(This was still common when I began my computing career.)
+but we have compressed the data to save computer memory.
+(This was still common when I began my career.)
 The weights statement in coxph, survreg, and survfit implements replication
 weights, by default.
 
 A sampling weight represents differential weighting and is often fractional.
 Examples are from survey samples, or IPW used to balance a study.
 An approximate variance can be obtained by rescaling so that $\sum w_i =n$
-and treating them as replication weights.  The more proper approach is an
-IJ variance.
+and treating these as replication weights.  The more proper approach is the
+IJ variance of formula \eqref{ijvar} above.
 
 
 \section{History}
 Like many good statistical ideas the IJ has been rediscovered multiple times
-in the statistical literature and appeared under multplie names.
-Two common manifestations are White's standard
+in the statistical literature and has appeared under multplie names.
+Examples are White's standard
 error for the linear model (or Huber-White, or Eicker-Huber-White), the
 working independence variance estimate for a generalized estimating equation
 (GEE) model, and the Horvitz-Thompson in survey sampling.
@@ -115,23 +118,33 @@ where $R$ is a diagonal matrix of residuals.
 For the simple KM, let $e(s)$ and $n(s)$ be the number of events and the
 number at risk at time $s$, respectively.
 
-\begin{align*}
-  \lambda(s) &= \frac{e(s)}{n(s)} \\
+\begin{align}
+  \lambda(s) &= \frac{e(s)}{n(s)} \nonumber\\
              &= \frac{\sum w_i dN_i(s)}{\sum w_i Y_i(s)} \\
-  S(t) &= \prod_{s \le t} [1- \lambda(s)] \\
+  S(t) &= \prod_{s \le t} [1- \lambda(s)] \nonumber \\
   \frac{\partial \lambda(s)}{\partial w_i} &= 
         \frac{dN_i(s) - Y_i(s) \lambda(s)}{n(s)} \\
-  d_i(t) &= \frac{\partial \prod_{s \le t} 1- \lambda(s)}{\partial w_i} \\
-         &= \frac{\partial \exp(\log( \prod_{s le t} [1- \lambda(s)]))}}
-    {\partial w_i} \\
+  \frac{\partial S(t)}{\partial w_i} &= 
+     \frac{\partial \left(\prod_{s \le t} [1- \lambda(s)]\right)}{\partial w_i} 
+     \nonumber \\
+         &= \frac{\partial \exp(\log( \prod_{s \le t} [1- \lambda(s)]))}
+    {\partial w_i} \nonumber\\
          &= S(t)\sum_{s \le t} -\frac{dN_i(s) - Y_i(s) \lambda(s)}
-                           {n(s)[1- \lambda(s)]} \\
-  V(t) &= \sum_{i=1}^n d_i^2(t) \\
-       &= S^2(t) \sum_{s \le t} \frac{e(t)}{n(t)[n(t)- e(t)]}
-\end{align*}
+                           {n(s)[1- \lambda(s)]} \label{trick1}\\
+  V(t) &= \sum_{i=1}^n \left(\frac{\partial S(t)}{\partial w_i} \right)^2
+  \label{kmij}\\
+       &= S^2(t) \sum_{s \le t} \frac{e(t)}{n(t)[n(t)- e(t)]}\label{greenwood}
+\end{align}
 
   
-The last step above is true if all weights =1 (simple KM) and $e(t)< n(t)$.
+The exp(log( trick of equation \eqref{trick1} makes the derivative simpler;
+as importantly it makes the computer code simpler since the term can be
+accumulated over time.
+Equation \eqref{kmij} is the IJ variance for the Kaplan-Meier, and 
+equation \eqref{greenwood} is the well known Greenwood estimator of variance.
+If all the case weights are 1 and there is no delayed entry, it turns out
+that these are identical. This was discovered emprically, and later proven
+mathematically by Anne Eaton.
 
 \subsection{Future}
 
@@ -146,10 +159,6 @@ deal with all the cases.
     \end{itemize}
   \item soon: survival, hazard, sojourn from coxph fit
   \item someday: predicted curves from survreg
-\end{itemize}
-
-  \item survfit:  \code{resid(fit, times=, type= cumhaz / pstate / sojourn)}
-  \item coxph  :  \code{resid(fit, type='dfbeta')}
 \end{itemize}
 An optional collapse argument will return one row per id.
 
@@ -223,15 +232,35 @@ For instance
 
 <<psuedo, echo=TRUE>>=
 sfit <- survfit(Surv(time, status) ~1, data=lung)
-ps <- pseudo(sfit, type="surv", time=365)  # 1 year survival
-hist(ps, nclass=25)
+ps <- 1- pseudo(sfit, type="surv", time=365)  # 1 year survival
+# we usually want to model y=death not h=alive in the logit, hence the 1-
+plot(ps ~ jitter(status-1),lung, xaxt='n', xlab="Status", ylab="Pseudovalue")
+axis(1, 0:1, c("Alive", "Dead"))
 
-pfit <- glm(ps ~ ph.ecog + sex, family= gaussian(link= blogit()), lung)
+lung2 <-cbind(lung, id=1:nrow(lung), pseudo= ps)
+pfit <- glm(pseudo ~ ph.ecog + sex, family= gaussian(link= blogit()), lung2)
 summary(pfit)
+
+sdata <- svydesign(id=~id, variables= ~ pseudo + ph.ecog + sex + age, 
+                   weights=NULL, data= lung2)
+pfit2 <- svyglm(pseudo ~ ph.ecog + sex, design=sdata,
+                family= gaussian(link= blogit()))
+all.equal(coef(pfit2),coef(pfit))
+rbind("glm se"= sqrt(diag(vcov(pfit))), "svyglm" = sqrt(diag(vcov(pfit2))))
 @ 
 
 See the \code{psuedo} command in the survival package.
-The pseudo library in R uses the standard jackknife, and is much slower.
+Formally, the variance of a psuedo-value fit needs to use a sandwich
+estimate, such as is provided by svyglm.  When there is a single
+endpoint, the ordinary glm std will often be very close.
+When multiple time values are used in a joint model, then the robust
+sandwich is essential.
+See the psuedovalues vignette in the survivalVignettes package for more
+examples.
 
-Psueudovalue regression appears to not be correct when there is delayed entry.
+Notes:
+\begin{itemize}
+  \item The pseudo library in R uses the standard jackknife, and is much slower.
+  \item Psueudovalue regression appears be incorrect when there is delayed entry.
+\end{itemize}
 \end{document}
