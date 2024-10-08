@@ -1,0 +1,596 @@
+\documentclass{beamer}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\lhat}{\hat\lambda}
+
+\title{Time-dependent covariates and survival curves}
+\author{Terry Therneau}
+\date{July 2024}
+
+\begin{document}
+<<echo=FALSE>>=
+opts_chunk$set(comment=NA, tidy=FALSE, highlight=FALSE, echo=FALSE,
+               fig.with=7, fig.height=5.5, fig.path="figures/",
+               out.width="\\textwidth", out.height="!", device="pdf",
+               cache=TRUE, background="#FFFFFF",
+               warning=FALSE, error=FALSE)
+options(contrasts= c("contr.treatment", "contr.poly"),
+        show.signif.starts = FALSE, continue=" ", width=60)
+par(mar=c(4.1, 4.1, 1.1, 1.1))
+options(palette= "Okabe-Ito")
+library(survival)
+palette("Okabe-Ito")
+@
+
+\begin{frame}
+\titlepage
+\end{frame}
+
+\begin{frame}{Ideas}
+\begin{itemize}
+  \item Time-dependent covariates are very useful
+  \item Absolute risk and hazard ratios are complimentary
+  \item In multistate models, both are essential
+  \item But you can't compute Pr(future outcome) with a time-dependent variable
+ \pause
+  \item But I need it \ldots
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Mayo Clinic Study of Aging}
+<<statefig>>=
+states <- c("Cognitively\nUnimpaired", "Dementia", "Death")
+smat <- matrix(0, 3,3, dimnames=list(states, states))
+smat[1, 2:3] <- smat[2,3] <- 1
+statefig(1:2, smat)
+@ 
+\end{frame}
+
+\begin{frame}{Data}
+\begin{itemize}
+  \item 4984 subjects, up to 16 years follow-up (median 4)
+  \item 712 dementia events, 1852 deaths
+  \item 51\% male
+  \item 27\% APOE carrier
+  \item initial amyloid: 24, 7, 5, 64\%  normal, moderate, high, NA
+  \item initial CMC 0: 753, 1: 1005, 2: 1087, 3: 1088, 4-5: 897  6-7: 114 
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\includegraphics[height=\textheight]{figures/fig2.pdf}
+\end{frame}
+
+\begin{frame}
+\includegraphics[width=\textwidth]{figures/fig3.pdf}
+\end{frame}
+
+\begin{frame}{Primary Biliary Cirrhosis}
+ \begin{itemize}
+  \item Two clinical trials of D-penicillamine for treamtment of PBC
+  \item No treatment effect
+  \item Data merged, and used as a model for natural history of PBC (n=418)
+  \item Covariates of bilirubin (10.4), age (5.1), albumin (3.8), 
+    edema (3.3), prothrombin time (3.1)
+  \item Concordance = .835
+  \item \code{pbc} and \code{pbcseq} data sets
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Model}
+  \begin{itemize}
+    \item Use only bilirubin and age, categorical bilirubin
+    \item Use \code{pbcseq} subset (n=312)
+    \item Planned visits at 6m, 1yr, yearly thereafter
+    \item Time-dependent bilirubin
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+<<fig1>>=
+pdat0 <- subset(pbcseq, !duplicated(id))
+pdat0$bili3 <- cut(pdat0$bili, c(0,1,5,100), c("normal", "1-4", ">4"))
+pdat0$death <- 1*(pdat0$status ==2)
+pdat0$year  <- pdat0$futime/365.25   # so I can skip "xscale=365.25" below
+p2 <- survfit(Surv(year, death)~1, pdat0)
+p3 <- survfit(Surv(year, death) ~ bili3, pdat0)
+
+oldpar <- par(mfrow=c(1,2), mar=c(5,5,1,1))
+plot(p2, xmax= 10, conf.int=F, fun='event', lwd=2,
+     xlab="Years from randomization", ylab="P(death)")
+#lines(p1[1], col=1, lwd=1, fun='event', conf.int=FALSE)
+#legend(100, .5, c("All 418", "Randomized 312"), lty=1, lwd=1:2)
+
+plot(p3, xmax= 10, fun='event', lty=1, lwd=2,
+     xlab="Years from randomization", ylab="P(death)")
+text(c(7.6, 6.6, 4.8), c(.1, .31, .66), c("normal", "bili 1-4",
+                                             "bili >4"), adj=.1)
+text(0, .9, "Baseline bilirubin", adj=0)
+par(oldpar)
+@ 
+\end{frame}
+
+<<makedata>>=
+pdata <- tmerge(pdat0[,c(1,4:6)], pdat0, id=id,
+                 death = event(futime, death),
+                 options= list(tstart="day1", tstop="day2"))
+# I have arbitrarily decided not to make use of any new lab within 30
+#  days of death.  This loses 33 bilirubin values.
+ptemp <- subset(pbcseq, !(status ==2 & (futime <= (day + 7))))
+ptemp$bili3 <- cut(ptemp$bili, c(0, 1, 4, 100), c("normal", "1-4", ">4"))
+pdata <- tmerge(pdata, ptemp, id=id, edema = tdc(day, edema),
+                bili= tdc(day, bili), albumin = tdc(day, albumin),
+                protime = tdc(day, protime),
+                bili3 = tdc(day, bili3), b3= event(day, as.numeric(bili3)))
+# To use bili3, a factor, as an event I'd first need to add censor as a 
+#  first level.  But for a numeric tmerge knows to use 0=censor.
+
+# Now create the multistate dataset using bilirubin groups
+# 1. By definition, bilirubin can only change on 'pbcseq' days
+# 2. Don't count two visits in the same state as a transition
+temp <- with(pdata, ifelse(death, 4,
+                           ifelse(as.numeric(bili3)==b3, 0, b3)))
+pdata$bstate <- factor(temp, 0:4, c("none", "normal", "1-4", ">4", "death"))
+pdata$age1 <- with(pdata, age + day1/365.25)
+pdata$age2 <- with(pdata, age + day2/365.25)
+pdata$year1 <- pdata$day1/365.25
+pdata$year2 <- pdata$day2/365.25
+pdata$age10 <- pdata$age/10
+pdat0$age10 <- pdat0$age/10
+
+check <- survcheck(Surv(year1, year2, bstate) ~ 1, pdata, id=id, istate=bili3)
+
+pfit1 <- coxph(Surv(year, death) ~ age10 + log2(bili), pdat0)
+pfit2 <- coxph(Surv(year1, year2, death) ~ age10 + log2(bili), pdata, id=id) 
+pfit1b <- coxph(Surv(year, death) ~ age10 + bili3, pdat0)
+pfit2b <- coxph(Surv(year1, year2, death) ~ age10 + bili3, pdata, id=id) 
+@ 
+
+
+
+\begin{frame}
+  \begin{tabular}{ccccc}
+     & \multicolumn{3}{c}{Hazard Ratio} \\ 
+      &Age10 & bili 1--4 & bili $>4$ & C  \\ \hline
+<<pbctab1, results="asis">>=
+temp2 <- c(concordance(pfit1)$concordance,  concordance(pfit2)$concordance, 
+           concordance(pfit1b)$concordance, concordance(pfit2b)$concordance)
+cat("Time-fixed &", paste(sprintf("%4.1f", exp(coef(pfit1b))), collapse= ' & '), 
+      "&", sprintf("%4.2f", temp2[3]), "\\\\ \n")
+cat("Time-dependent&", paste(sprintf("%4.1f", exp(coef(pfit2b))), collapse=' &'),
+        "&", sprintf("%4.2f", temp2[4]), "\n")
+@ 
+  \end{tabular}
+\end{frame}
+
+\begin{frame}
+<<pbcfig1>>=
+count <- table(pbcseq$id)
+p10 <- subset(pbcseq, id %in% names(count)[count>10])
+set.seed(1965)  # a good year
+idx <- unique(p10$id)
+p10$age1 <- p10$age + p10$day/365.25  # age at measurement
+plast <- subset(p10, !duplicated(id, fromLast=TRUE))
+plast$fage <- plast$age + plast$futime/365.25  # age at last fu
+
+par(mfrow=c(2,2), mar=c(5,5,1,1))
+for (j in 1:4) {
+    plot(bili ~ age1, p10, log='y',type='n', xlab="Age")
+    for (i in seq(j, length(idx), by=4)) {
+        who <- (p10$id == idx[i])
+        lines(bili ~age1, p10, subset= who, col= 1 + i%%7, lwd=1)
+        # It turns out that segments were not visible: almost all are <1 year
+        #with(subset(plast, id== idx[i]),
+        #     segments(age1, bili, fage, bili, lty=1, 
+        #         col= 1 + i%%7))
+        k <- (plast$status==2 & plast$id== idx[i])
+        if (any(k)) {
+            points(plast$fage[k], plast$bili[k], pch=1, 
+                          col= 1 + i%%7)  
+        }
+    }
+    abline(h=1.3, lty=3)
+}
+par(oldpar)
+@
+\end{frame}
+
+\begin{frame}{Conservative approach}
+<<pbclandmark>>=
+lfit0 <- survfit(Surv(futime, death) ~ bili3, pdat0)
+
+landmark <- function(years, data=pdata) {
+    tdata <- subset(data, year2 > years)
+    tdata$bili3 <- with(tdata, bili3[match(id, id)]) # from first obs
+    sfit <- survfit(Surv(year1, year2, death) ~ bili3, tdata, id=id)
+    cfit <- coxph(Surv(year1, year2, death) ~ age10 + bili3, tdata, id=id,
+                  model=TRUE)
+    first <- subset(pdata, !duplicated(id))
+    dummy <- expand.grid(age10=first$age10, bili3=levels(pdata$bili3))
+    csurv <- survfit(cfit, newdata=dummy)
+    xmat <- model.matrix(~ bili3-1, data=dummy)/ nrow(first)
+    csurv$surv <- csurv$surv %*% xmat   # marginal over age
+    list(cfit=cfit, sfit=sfit, csurv=csurv)
+}
+l0 <- landmark(0)
+l4 <- landmark(4)
+l8 <- landmark(8)
+par(mfrow=c(2,2), mar=c(5,5,1,1))
+plot(l0$sfit, fun="event", lty=1:3, lwd=2, xmax=12,
+     xlab="Years from enrollment", ylab="P(death")
+lines(l0$csurv, fun='event', col=2, lty=1:3)
+
+plot(l4$sfit, fun="event", lty=1:3, lwd=2, xmax=12,
+     ylim=c(0,1), xlab="Years from enrollment", ylab="P(death")
+lines(l4$csurv, fun='event', col=2, lty=1:3)
+
+plot(l8$sfit, fun="event", lty=1:3, lwd=2, xmax=12,
+     ylim=c(0,1), xlab="Years from enrollment", ylab="P(death")
+lines(l8$csurv, fun='event', col=2, lty=1:3)
+legend(1, .7, c("bilirubin <=1", "bilirubin 1-4", "bilirubin > 4"), lty=1:3,
+       lwd=2, bty='n')
+par(oldpar)
+@
+\end{frame}
+
+\begin{frame}
+  \begin{itemize}
+    \item No explicit use of time-dependent data
+    \item Curves are correct, but meh
+    \item Aside: these are marginal over age.  This matters.
+      \end{itemize}
+\end{frame}
+
+\begin{frame}{Worst approach}
+  \begin{itemize}
+    \item Cateorize each subject by their max bilirubin achieved
+    \item A variant of immortal time bias
+      \begin{itemize}
+        \item Covariate that depends on the future
+        \item Endpoint that depends on the future
+        \item Selection that depends on the future
+      \end{itemize}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+<<immortalb1>>=
+temp <- tapply(pdata$bili, pdata$id, max, na.rm=TRUE)
+pdat0$bad3 <- cut(temp, c(0, 1, 5, 100), levels(pdata$bili3))
+bad3 <- survfit(Surv(year, death) ~ bad3, pdat0)
+
+plot(p3, fun='event', xmax=10, col=1:3, lwd=2,
+     xlab="Years from enrollment", ylab="Death")
+lines(bad3, fun='event', col=1:3, lty=2, lwd=2)
+legend("topleft", outer(format(c("baseline", "max")),
+                        c("bili >4", "bili 1-4", "bili<=1"), paste), 
+       col=rep(3:1, each=2), lty=1:2, lwd=2, bty='n')
+@ 
+\end{frame}
+
+\begin{frame}[fragile]{Useless: static referrent}
+  \begin{itemize}
+    \item Fit the time-dependent Cox model
+    \item Predict the survival for a fixed covariate set
+    \item Example in Therneau and Grambsch
+  \end{itemize}
+\begin{verbatim}
+fit <- coxph(Surv(year1, year2, death) ~ age10 + bili3, 
+               pdata, id=id)
+dummy1 <- data.frame(age10= mean(pdat0$age10),
+                      bili3= "1-4")
+surv1 <- survfit(fit, dummy1)
+
+dummy2 <- data.frame(age10= pdat0$age10, 
+               bili3="1-4")
+surv2 <- survfit(dummy2)
+\end{verbatim}
+\end{frame}
+
+\begin{frame}
+<<pbcfail1>>=
+dummy <- expand.grid(age10= pdat0$age10,
+                    bili3= levels(pdat0$bili3))
+psurv1m <- survfit(pfit1b, newdata= dummy)
+psurv2m <- survfit(pfit2b, newdata= dummy)
+xx <- model.matrix(~ bili3 -1, data=dummy)
+psurv1m$surv <- psurv1m$surv %*% xx/ nrow(pdat0)
+psurv2m$surv <- psurv2m$surv %*% xx/ nrow(pdat0)
+
+plot(p3, xmax=12,  lwd=2, lty=1, fun="event",
+     conf.time=c(3,6,9), col=1, conf.offset=0,
+     xlab="Years from enrollment", ylab="P(death)")
+lines(psurv1m, fun="event", lty=2, lwd=2, col=2, conf.int=FALSE)
+lines(psurv2m, fun='event', lty=3, lwd=2, col=3, conf.int=FALSE)
+
+legend(0, 1, c("KM", "Cox, baseline covariates", 
+                 "Cox, TD covariates"), lty=1, col=1:3,
+       lwd=2, bty='n')
+@
+\end{frame}
+
+<<onefour>>=
+# compute the prob of 1-4 if >4 to death is disallowe
+temp <- survfit(Surv(year1, year2, bstate) ~ 1, id=id, istate=bili3,
+                p0=c(0,1,0,0), 
+                pdata, subset=(bili!=">4" | bstate != "death"))
+@ 
+
+\begin{frame}{What went wrong?}
+  \begin{itemize}
+    \item Baseline covariates
+      \begin{itemize}
+        \item Cox model based on baseline bilirubin
+        \item Prediction for someone with a specified baseline bilirubin
+      \end{itemize}
+      \item TD covariates
+        \begin{itemize}
+          \item Cox model based in TD bilirubin
+          \item Middle curve is the prediction for a cohort of subjects who
+            start with bilirubin 1-4, and then \emph{never change}
+        \end{itemize}
+      \item Baseline bili: 116 normal, 140 1-4, 56 $> 4$
+      \item Almost all of the 140 progress   
+   \pause
+    \item Correct estimate for a cohort which doesn't exist
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Useless: Extended Kaplan-Meier}
+  \begin{itemize}
+    \item Snappin et al, American Statistician, 2005 
+    \item Use simple survfit on the time-dependent data
+  \end{itemize}
+\begin{verbatim}
+  snappin <- survfit(Surv(year1, year2, death) ~ bili3, 
+                     data= pdata)
+\end{verbatim}
+\end{frame}
+
+\begin{frame}
+<<ekm1>>=
+ekm <- survfit(Surv(year1, year2, death) ~ bili3, pdata)
+plot(p3, xmax=12,  lwd=2, lty=1, fun="event", ylim=0:1,
+     xlab="Years from enrollment", ylab="P(death)")
+lines(psurv2m, fun='event', lty=2, col=2, lwd=2)
+lines(ekm, fun='event', lty=4, col=3, lwd=2)
+legend("topleft", c("KM", "TD Cox", "EKM"), lty=c(1,2,4), 
+       col=1:3, lwd=2, bty='n')
+@
+\end{frame}
+
+\begin{frame}{Big picture}
+  \begin{itemize}
+    \item To predict future survival with a TD covariate one needs to specify
+      a \emph{covariate path}
+    \item Possible in some cases
+    \item Allowed by the software
+    \item Alternative: use a multistate model
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+<<fourstate>>=
+oldpar <- par(mar=c(1,1,1,1))
+states <- c("normal\nbilirubin", "1-4", ">4", "death")
+smat <- matrix(0L, 4,4, dimnames= list(states, states))
+smat[1:3,4] <- 1
+smat[1,2] <- smat[2,3] <- 1
+smat[2,1] <- smat[3,2] <- 1.4
+statefig(matrix(c(3,1), ncol=1), smat, alty=c(2,1,2,1,1,1,1))
+
+aj3  <- survfit(Surv(year1, year2, bstate) ~ 1, pdata, istate=bili3,
+          id=id)
+aj3a <- survfit(Surv(year1, year2, bstate) ~ 1, pdata, istate=bili3,
+                p0=c(1,0,0,0), id=id)
+aj3b <- survfit(Surv(year1, year2, bstate) ~ 1, pdata, istate=bili3,
+                p0=c(0,1,0,0), id=id)
+aj3c <- survfit(Surv(year1, year2, bstate) ~ 1, pdata, istate=bili3,
+                p0=c(0,0,1,0), id=id)
+par(oldpar)
+@
+\end{frame}
+
+\begin{frame}{Survival curves}
+\begin{itemize}
+  \item AJ: specify starting time and/or state (optional)
+  \item Ordinary Cox model: specify the covariates (not optional)
+  \item MSH: specify covariates and optinally the starting time and/or state 
+\end{itemize}
+\end{frame}
+
+\begin{frame}{AJ}
+\begin{align*}
+  \lhat_{jk}(t) &= \frac{\sum_i dN_{ijk}(t)}{\sum_i Y_{ij}(t)} \\
+    H(t) &= \left( \begin{array}{cccc}
+      \square & \lhat_{12}(t) & \lhat_{13}(t) & \lhat_{14}(t) \\
+      \lhat_{21}(t) & \square & \lhat_{23}(t) & \lhat_{24}(t) \\
+      \lhat_{31}(t) & \lhat_{32}(t) & \square & \lhat_{34}(t) \\
+       0& 0 & 0 & 1 \end{array} \right) \\
+  p(t) &= p(t_0) \prod_{t_0< s \le t}H(s)
+\end{align*}
+ \begin{itemize}
+   \item $t_0$ is the starting time, default = minimum time in the data
+   \item $p(t)$ a vector of length $m$= number of states.
+   \item $t_0$ and $p(t_0)$ can be set by the user.
+ \end{itemize}
+\end{frame}
+
+\begin{frame}
+<<fourfig>>=
+opar <- par(mfrow=c(2,2), mar=c(5,5,1,1))
+plot(aj3a, col=c(2,3,4,1), xmax=12, lwd =2, xlab="Years from randomization",
+     ylab= "P(state)")
+plot(aj3b, col=c(2,3,4,1), xmax=12, lwd =2, xlab="Years from randomization",
+     ylab= "P(state)")
+plot(aj3c, col=c(2,3,4,1), xmax=12, lwd =2, xlab="Years from randomization",
+     ylab= "P(state)")
+frame()
+par(usr=c(0,10,0,10))
+legend(2,7, c("Bilirubin <=1", "Bilirubin 1-4", "Bilirubin >4", "Death"),
+       col=c(2,3,4,1), lwd=2, cex=1.2)
+par(opar)
+@
+\end{frame}
+
+\begin{frame}[fragile]
+<<echo=TRUE>>=
+aj3a <- survfit(Surv(year1, year2, bstate) ~ 1, pdata, 
+                istate=bili3, p0=c(1,0,0,0), id=id)
+aj3b <- survfit(Surv(year1, year2, bstate) ~ 1, pdata, 
+                istate=bili3, p0=c(0,1,0,0), id=id)
+aj3c <- survfit(Surv(year1, year2, bstate) ~ 1, pdata, 
+                istate=bili3, p0=c(0,0,1,0), id=id)
+@ 
+\end{frame}
+
+\begin{frame}
+<<overlay1>>=
+plot(p3, fun='event', col="grey", lwd=2, lty=1, xmax=12, conf.time= c(3,6,9),
+     xlab="Years from randomization", ylab="P(death)")
+lines(aj3a[4], col=1, lwd=2, lty=1, conf.time= c(3,6,9))
+lines(aj3b[4], col=2, lwd=2, lty=1, conf.time= c(3.1,6.1,9.1))
+lines(aj3c[4], col=3, lwd=2, lty=1,  conf.time= c(3,6,9))
+@
+\end{frame} 
+
+\begin{frame}{Math}
+  The death curve for group ``normal at t0'' will have an increment at 
+     time $t$ of
+  \begin{itemize}
+    \item KM:  KM(t-)* P(death at $t |$ started in 1)
+    \item AJ : $\sum_{j=1}^3$ P(currently in $j |$ started in 1) 
+                            P(death at $t |$ currently in $j$)
+    \item The AJ uses all the data for all the curves.
+      \begin{itemize}
+        \item smaller variance
+        \item Markov assumption
+      \end{itemize}
+  \end{itemize}
+\end{frame}
+
+
+\begin{frame}{Hazard models}
+  \begin{align*}
+   \lambda_{ijk}(t) &= \lambda_{jk}(t) \exp(X_i\beta) \\
+   \lambda_{j4} &= \lambda_{d} exp(\gamma_j)
+   \end{align*}
+
+  \begin{itemize}
+    \item A covariate now belongs to the state rather than to the subject.
+    \item Subtle, but with software implications
+    \item Skip covariates for the bili:bili transitions.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Hazard models}
+<<pfit, echo=TRUE>>=
+mfit0 <- coxph(Surv(year1, year2, death) ~ age10 + bili3, 
+               ties="breslow", data= pdata)
+mfit1 <- coxph(list(Surv(year1, year2, bstate) ~ 1,
+                    0:4 ~ age10 / common + shared),  
+               data= pdata, istate=bili3, id=id)
+mfit2 <- coxph(list(Surv(year1, year2, bstate) ~ 1,
+                    0:4 ~ age10 +bili3 +1 / common),  
+               data= pdata, istate=bili3, id=id)
+
+rbind(mfit0= coef(mfit0), mfit1= coef(mfit1),
+      mfit2 = coef(mfit2))
+@ 
+\end{frame}
+
+\begin{frame}[fragile]
+<<pfitprint>>=
+print(mfit1, digits=1)
+@ 
+\end{frame}
+
+\begin{frame}
+<<refig>>=
+statefig(rbind(3,1), smat)
+@ 
+\end{frame}
+
+\begin{frame} 
+\begin{align}
+  \lambda_{14} &= \lambda_d\exp(\beta age) \\
+  \lambda_{24} &= \left[\lambda_d\exp(\gamma_{12})\right]\exp(\beta age) \\
+  \lambda_{34} &= \left[\lambda_d\exp(\gamma_{13})\right]\exp(\beta age) \\
+\end{align} 
+
+  \begin{itemize}
+    \item Same likelihood as the simple TD model, wrt death
+    \item But now we can estimate curves properly
+    \item $\gamma$ coefficients belong to the hazard/state pair 
+      and not the subject
+  \end{itemize}
+\end{frame}
+
+\begin{frame}
+<<pbcm2>>=
+mfit3 <- coxph(list(Surv(year1, year2, bstate) ~ 1,
+                    c(1:3):"death" ~ age10),
+               data= pdata,  id=id, istate= bili3)
+
+mdummy <- data.frame(age10=pdat0$age10)
+msurv1a <- survfit(mfit1,newdata=mdummy, p0=c(1,0,0,0))
+msurv1b <- survfit(mfit1,newdata=mdummy, p0=c(0,1,0,0))
+msurv1c <- survfit(mfit1,newdata=mdummy, p0=c(0,0,1,0))
+
+msurv1a$pstate <- apply(msurv1a$pstate, c(1,3), mean)
+msurv1b$pstate <- apply(msurv1b$pstate, c(1,3), mean)
+msurv1c$pstate <- apply(msurv1c$pstate, c(1,3), mean)
+
+msurv3a <- survfit(mfit3, newdata=mdummy, p0=c(1,0,0,0))
+msurv3b <- survfit(mfit3, newdata=mdummy, p0=c(0,1,0,0))
+msurv3c <- survfit(mfit3, newdata=mdummy, p0=c(0,0,1,0))
+msurv3a$pstate <- apply(msurv3a$pstate, c(1,3), mean)
+msurv3b$pstate <- apply(msurv3b$pstate, c(1,3), mean)
+msurv3c$pstate <- apply(msurv3c$pstate, c(1,3), mean)
+
+plot(p3, fun='event', col=1, lwd=2, xmax=12,
+     conf.int=FALSE,
+     xlab="Years from randomization", ylab="P(death)")
+text(c(2.6, 5.7, 8.3), c(.7, .4, .1), c(">4", "1-4", "normal"))
+lines(aj3a[4], col=4, lwd=2, lty=2, conf.int=FALSE)
+lines(aj3b[4], col=4, lwd=2, lty=2, conf.int=FALSE)
+lines(aj3c[4], col=4, lwd=2, lty=2, conf.int=FALSE)
+
+lines(msurv1a[4], col=2, lwd=2, lty=3, conf.int=FALSE) 
+lines(msurv1b[4], col=2, lwd=2, lty=3, conf.int=FALSE)
+lines(msurv1c[4], col=2, lwd=2, lty=3, conf.int=FALSE)
+
+lines(msurv3a[4], col=3, lwd=2, lty=4, conf.int=FALSE) 
+lines(msurv3b[4], col=3, lwd=2, lty=4, conf.int=FALSE)
+lines(msurv3c[4], col=3, lwd=2, lty=4, conf.int=FALSE)
+
+legend("topleft", c("KM", "AG", "Cox1", "Cox2"), lwd=2, lty=1:4, 
+    col=c(1,4,2,3), bty='n')
+@ 
+\end{frame}
+
+\begin{frame}{Open questions}
+  \begin{itemize}
+    \item Multistate AJ: honest curves, but no $\hat\beta$ for bilirubin 
+      \begin{itemize}
+        \item How critical is the Markov assumption?
+        \item Is the reduction in variance bankable?
+        \item How many sub-states?
+        \item Multiple variables?
+      \end{itemize}
+    \item Multistate hazard model: correct curves AND coefficients
+      \begin{itemize}
+        \item How many sub-states?
+        \item Multiple variables (additivity)
+        \item Constraints
+        \item Code
+        \item Variance (IJ)
+      \end{itemize}
+  \end{itemize}
+\end{frame}
+
+\end{document}
