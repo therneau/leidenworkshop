@@ -22,7 +22,7 @@
 <<setup, echo=FALSE>>=
 library(survival)
 library(knitr)
-library(splines)
+library(splines2)
 opts_chunk$set(comment=NA, tidy=FALSE, highlight=FALSE, echo=TRUE,
                fig.width=4.5, fig.height=3, fig.path="figures/",
                device="pdf", dev.args=list(pointsize=8),
@@ -66,14 +66,14 @@ The hazard model assumes that
 $$
  \lambda_i(t) = e^{\beta_0(t) + \beta_1 x_{i1} + \beta_2x_{i2} + \ldots}
 $$
-If $beta_0(t)$ is a constant this reduces to Poisson regression, if it is
+If $\beta_0(t)$ is a constant this reduces to Poisson regression, if it is
 a spline this the equation for parametric proportional hazards, and if it
 is a general non-parametric function we have the Cox proportional hazards
 model.
-We will assume from the outset that the key assumptions of the model have
+We will assume from the outset that three key assumptions of the model have
 been explored and are satisfactory.
 \begin{enumerate}
-  \item Proportional hazards: each of the $\beta_i, i>0$ is constant over time,
+  \item Proportional hazards: each of the $\beta_i$, $i>0$ is constant over time,
     or equivalently, no interaction terms with $\beta_0$ are required.
   \item Functional form: each $x_i$ has a linear effect
   \item Additivity: No interactions between any $x_i$ terms are required.
@@ -85,9 +85,9 @@ been explored and are satisfactory.
 -- Yogi Berra
 \end{quote}
 
-The key validation question is whether a model is useful, a question that
-in our option, needs to be immediately clarified by a more careful
-definition of ``success'', which will, in our opinion, almost always be
+The key validation question is whether a model is useful.
+More specifically ``useful for the application in hand''.
+Any definition of success must, in our opinion, almost always be
 application specific.
 As a hypothetical example, assume that a cancer clinical trial has resulted in
 a fitted model, along with predicted survival curves specific to each treatment
@@ -98,74 +98,94 @@ of the results is to identify subjects with expected survival of $<6$ months
 for referral to supportive care.  
 For this purpose, the performance of the model wrt separating 1, 2, and 3+ year
 survivors is immaterial; validation should focus on the metric of interest.
-Another use might be to identify a subset with expected survival of more than
-1 year for enrollment in a trial of long term adjuvant therapy, e.g., a therapy
+Another use of the model might be to identify a subset with expected survival 
+of more than 1 year for enrollment in a trial of long term adjuvant therapy,
+e.g., a therapy
 that is not expected to have an influence on the earliest recurrences.
+We might further want to stratify treatment assignment by the expected
+disease free survival.  This leads to a quite different metric for success.
+For instance, mis-labeling a subject who will liver more than one year as
+a death before 1 year is a less severe error than the converse, the first only
+reduces enrollment rate while the second can bias results.
 
 More general validation of an existing model, using a separate external dataset,
 should not be a yes/no type of exercise, but rather an assessment of which
 aspects of the prediction are most reliable and which are may be less so.
 This will particularly be true in multi-state models, where it may well be true
-that one transition is poorly predicted while the others are successful. 
+that one transition is poorly predicted while the others are successful.
+In this case there will be a collection of validation results, which can
+help guide users with respect to their particular needs.  
 
 Much of the thinking and machinery for model validation has been developed in
 the context of binomial models.
-Survival data is more complex, in three ways.
+Survival data is more complex, however, in three ways.
 \begin{itemize}
   \item There are at least 3 possible assessments
     \begin{enumerate}     
-      \item The probability in state $j$, $p_j(t)$
       \item The expected number of visits to state $j$, $E(N_j(t))$
+      \item The probability in state $j$, $p_j(t)$
       \item The expected total sojourn time in state $j$, $s_j(t)$
     \end{enumerate}
   \item Each of these can be assessed at one or more chosen times $\tau$.
   \item The validation data set is subject to censoring.
 \end{itemize}
 
-For a simple alive/dead survival 1 and 2 above are the same:  
-the expected number of visits to the death state by time $t$ = the
-probability of death by time $t$.
-The same is true for any absorbing state in a mulit-state model.
+For a simple alive/dead survival 1 and 2 above are formally the same:  
+the expected number of visits to the death state by time $t$ = $n$ times the
+probability of death by time $t$, and
+the same is true for any absorbing state in a mulit-state model.
+Our computational approach for the two targets is however quite different.
+Measure 2 has been the most used, and 3 the least.
 Which of the measures is most appropriate, and even more so which time
-points $\tau$ might be a rational focus, will depend on the application target,
-i.e., on the situation specfic defintion of ``successful'' model prediction.
+points $\tau$ might be a rational focus, will depend on the application,
+i.e., on the situation specfic defintion of successful prediction.
 
-Censoring of the validation data is of course a central technical issue, 
+The validation will almost certainly be censored, and how to deal
+with this is a central technical issue, 
 as it always is for time to event models. There are essentially four
-ways to deal with it
+approaches.
 \begin{enumerate}
   \item Create uncensored data specific to a chosen assessment time $\tau$,
     then use standard methods for uncensored data. Two approaches are
     \begin{itemize}
       \item Use the redistribut-to-the-right (RTTR) algorithm to reassign the 
-        case weights of those censored prior to $\tau$ to other subjects in the
-        data.
+        case weights of those observations censored prior to $\tau$ to others,
+        resulting in a weighted subset who status at $\tau$ is known.
       \item Replace the response with pseudovalues at time $\tau$
     \end{itemize}
   \item Apply standard censored data methods to the validation data, and compare
     the results to the target model's predictions.  I will sometimes call this
     the ``$\yhat$ vs $\yhat$'' approach.
-  \item For assessment type 2, the total number of events, we can compare the
-    observed events to the expected number given the per-subject followup.
+  \item For assessment type 1, the total number of events, we can compare the
+    observed events to the expected number given per-subject followup.
     (Adjust the prediction to the data, rather than the data to the
     prediction.)
-    This arises naturally out of the counting process approach, and
+    This method arises naturally out of the counting process approach to
+    survival data, and
     is closely related to standardized mortality ratios (SMR), a
-    measure with a very long history. 
-  \item Ignore censoring. A disastrous approach, but one that sometime 
+    measure with a long history. 
+  \item Ignore censoring. A disastrous approach, but one that sometimes 
     appears in practice.
 \end{enumerate}
 
-One of the problems in the field, in our opinion, is the attempt to force
-survival into the Procrustean bed of binomial methods. 
-This leads to a focus on a single timepoint $\tau$, $p(\tau)$ as 
+In summary, the validation of time-to-event data has three primary
+dimensions: choice of the appropriate summary statistic,
+the choice of a range or set of prediction times, and choice of a method
+for handling censoring.
+The first and two of these will be closely tied to application at hand,
+the third is more technical.
+
+One of the problems in the field, in our opinion, has been the determined
+attempt to force survival into the Procrustean bed of binomial methods. 
+This most often leads to a focus on a single timepoint $\tau$, $p(\tau)$ as 
 the target, and use of the RTTR to create a binomial response. 
-This has the (small) positive benefit of making the results look familiar,
-at the cost of potentially large inefficiency.  
+This has the positive benefit of making the results look familiar,
+at the cost of potentially statistical inefficiency, and far more importantly,
+correctly answering the wrong question.  
 There is, after all, a reason that the Cox model is used for the analysis of
 censored data than RTTR($\tau$) followed by logistic regression.
 I have often heard the argument that ``we cannot do anything else, because 
-the readers will not understand it'', but it is not one I accept.
+the readers will not understand it'', but this is not one which I accept.
 Assuming a stupid audience is not a justification for sub-par methods.
 
 \section{Data}
@@ -181,11 +201,12 @@ The \code{gbsg} data set contains the patient records of 628 patients with
 complete data for prognostic variables, out of 720 enrolled in 
 1984--1989 trial conducted
 by the German Breast Study Group for patients with node positive breast cancer.
-These data sets were introduced by Royson and Sauerbrei \cite{Roystonxxx}
+These data sets were introduced by Royson and Altman \cite{Royston13b}
 and have been widely used.
-The figure below shows overall survival for the two groups.
+Figure \ref{fig:gbsg1} shows overall survival for the two groups.
 The Rotterdam study has longer follow-up.
-<<gbsg1>>=
+
+<<gbsg1, fig.cap="Rotterdam and GBSG data">>=
 gsurv <- survfit(Surv(rfstime/365.25, status) ~1, gbsg)
 rott2 <- rotterdam
 rott2$rfs <- with(rott2, ifelse(rtime<dtime, recur, death))
@@ -222,16 +243,18 @@ abline(v=9, col="gray")
 par(opar)
 @
 
+Results are in figure \ref{fig:gbsg2}. 
 Age has a very non-linear effect, with greater risk for both the youngest
 and oldest subjects.  Risk increases with the number of nodes, up to about 8-9
-and then stabilizes.  Recode nodes in this way, then examing the addition 
+and then stabilizes.  Recode nodes in this way, then examine the addition 
 of estrogen and/or progesterone receptors. 
 Using ranks is a useful tool for a ``first look'' at a very skewed
 variable, as ER and PGR are. 
 
 <<gbsg3>>=
+rott2$node8 <- pmin(rott2$nodes, 8)
 rfit2 <- coxph(Surv(rfstime, rfs) ~ pspline(age) + meno + size + grade+ 
-                    pmin(nodes,8) + hormon, rott2)
+                    node8 + hormon, rott2)
 anova(rfit2, rfit)
 
 er2 <- rank(rott2$er)/nrow(rott2)
@@ -297,14 +320,79 @@ gbsg2$size <- cut(gbsg2$sizec, c(0,20, 50, 500), c("<=20", "20-50", ">50"))
 gbsg2$pgr3 <- with(gbsg2, pmax(30, pmin(200, pgr)))
 gbsg2$rfs  <- gbsg2$status
 gbsg2$rfstime <- gbsg2$rfstime/365.25
+gbsg2$node8 <- pmin(gbsg2$nodes, 8)
+@ 
+
+\paragraph{Age scale}
+As an alternative analysis consider doing the model with current age as the
+time scale and time since enrollment as a covariate.
+A first question is how to model time-dependent age: we will start with a
+spline, forcing current age to be updated every .5 years. The longest 
+followup in the Rotterdam cohort is just ovef 19 years.
+
+<<tdage>>=
+rott3 <- survSplit(Surv(rfstime, rfs) ~ ., rott2, cut= seq(.5,19, .5))
+rott3$age1 <- rott3$age + rott3$tstart
+rott3$age2 <- rott3$age + rott3$rfstime
+
+rfit6 <- coxph(Surv(age1, age2, rfs) ~ pspline(tstart) + meno + size + grade +
+                   node8 + hormon + log(pgr3), rott3)
+2*c(diff(rfit5$loglik), diff(rfit6$loglik))
+termplot2(rfit6, term=1, se=TRUE, ylim=c(-6,5)/10)
+abline(v=c(2,7), lty=3)
+abline(h=c(-.25, 0, .25), col='gray')
+@ 
+
+The partial likelihood for this model is actually larger than when we modeled
+age.  The RFS rate rises by about 1.6 over the first 2 years after enrollment,
+then falls again, stabilizing after around 7 years.
+(The confidence intervals get crazy after about 12 years so we restricted the
+range of the plot.)
+
+(Aside: the proper complement to a model with time-since-enrollment as the
+time scale and age as a covariate is one with age as a time scale and 
+enrollment time as a covariate.  Each model controls for one of the variables
+by matching and the other by modeling it.)
+
+When drawing a survival curve on age scale, we also need to specify
+a starting point, e.g., expected survival for someone enrolled at age 64
+would be
+
+<<tdage2>>=
+surv64 <- survfit(Surv(age1, age2, rfs) ~ I(nodes==0), rott3, start.time=64)
+plot(surv64, fun='event', lty=1:2,  xlab="Age", ylab="Death")
+legend(75, .4, c("Nodes > 0", "Nodes =0"), lty=1:2, bty='n')
+@ 
+
+Footnote: the PH assumption is more tenable on age scale.
+No idea yet whether or how to discuss this.
+
+<<breastzph>>=
+zp5 <- cox.zph(rfit5, transform='identity') # 4 hard fails
+zp5
+zp6 <- cox.zph(rfit6, transform='identity') # 2
+zp6
+
+opar <- par(mfrow=c(2,3), mar=c(5,5,1,1))
+plot(zp5[1], resid=FALSE)
+plot(zp5[3], resid=FALSE)
+plot(zp5[5], resid=FALSE)
+plot(zp5[7], resid=FALSE)
+plot(zp6[1], resid=FALSE)
+plot(zp6[7], resid=FALSE)
+par(opar)
 @ 
 
 \subsection{Amyloidosis}
- Still need to add these datasets.
+ Still need to add this data.  
+True external validation of 3 separate risk scores.
 \subsection{Monoclonal gammopathy}
+Early enrollment predicting late enrollment.  Semi-competing risks.
 \subsection{URSO treatment}
+Application of the PBC risk score to a trial of UCDA.
 \subsection{Dementia and Death}
-
+Fits from a fixed population (Mayo Clinic Study of Aging) applied to 
+data from the Alzheimer's Disease Neuroimaging Initiative (ADNI)
 
 \section{Discrimination}
 \subsection{Concordance}
@@ -427,13 +515,13 @@ this discussion too will fade with time.
 
 A variation that is important is the dichotomized concordance: replace $t_i$
 with $I(t_i <= \tau)$ for some chosen cutpoint $\tau$, i.e., 
-an indicator of death at or before time $\tau$.
+a 0/1 indicator of death at or before time $\tau$.
 Then
 \begin{itemize}
   \item The RTTR algorithm can be used to reassign the case weights of all
     those censored before $\tau$, for whom the value of the indicator variable
     is uncertain, to other cases.  This results in a weighted data set where
-    the indictor is known, for all those with non-zero weight.
+    the 0/1 indictor is known, for all those with non-zero weight.
   \item Compute a weighted concordance on the remaining observations.
 \end{itemize}
 Since it is based on a 0/1 outcome the resulting value of $C$ is equal to the
@@ -441,31 +529,31 @@ area under a reciever operating curve (AUROC).
 This approach has been labeled as the ``time-dependent AUROC''.
 We consider this label a poor choice, however, because it invites confusion
 with time-dependent covariates,
-and will henceforth refer to this approach as the 
+and will henceforth refer to this as the 
 ``dichotomized time concordance'' or DTC.
 
 The DTC and $C$ measure different things. 
 To see this, divide the counts of concordant and
-discordant pairs in $C$ into three groups: ($t_i \le \tau$ and $t_j \le \tau$),
-($t_i> \tau$ and $t_j >\tau$), and ($t_i \le \tau$ and $t_j > \tau$);
-the DTC is based only on the third group.
+discordant pairs in $C$ into three groups: both times $\le \tau$,
+both times $> \tau$, and ($t_i \le \tau$,\; $t_j > \tau$);
+the DTC is based only on the third group and so will be numerically different.
 The DTC tends to be a bit larger than $C$, but with a larger variance.
-With respect to the first of these, consider all pairs with $|t_i- t_j| <c$
+With respect to why it is larger, consider all pairs with $|t_i- t_j| <c$
 where $c$ is a small constant, say 1/20 the range of $t$.
-These are normally the hardest pairs to score correctly, and $C$ includes
-many more of them, DTC only has the subset which are close to $\tau$.
+These are normally the hardest pairs to score correctly.  $C$ includes
+many more such pairs, the DTC only has the subset which are close to $\tau$.
 
 \subsection{Breast cancer}
-The next figure shows the $C$ statistic with $n(t)$ (Harrell, default) and
-$S/G$ weights (Schemper or Uno) at cutpoints $\tau$ from 1 to 7 years, 
+Figure \ref{fig:gbsg5} shows the $C$ statistic with $n(t)$ (Harrell, default) and
+$S/G$ weights (Schemper or Uno) at 151 cutpoints $\tau$ from 1 to 7 years, 
 along with the DTC at those same points.
 The $C$ statistic at $\tau=4$, say, is a measure of how accurate predictions
-are up through 4 years, and is computed by treating all pairs with both
+are up through 4 years, and can be computed by treating all pairs with both
 $t_i$ and $t_j$ greater than 4 as tied.  
 
-<<gbsg5>>=
+<<gbsg5, fig.caption="C statistics versus truncation time using predictions from the Rotterdam model, for Rotterdam and GBSG data sets.">>=
 tau <- seq(1, 7, length=151)
-reweight <- rttright(Surv(rfstime, rfs) ~ 1, gbsg2, times=tau, renorm=FALSE)
+reweight <- rttright(Surv(rfstime, rfs) ~ 1, gbsg2, times=tau)
 
 Cstat <- array(0, dim=c(151,2,4)) # 3 values, 4 std
 yhat <- predict(rfit5, newdata=gbsg2)
@@ -498,9 +586,9 @@ The plot is very interesting.
 \begin{itemize}
   \item For this particular data set pair, the discrimination of the model
     in the GBSG data set is not too far from its performance in the
-    Rotterdam data used to build the model.  
+    Rotterdam data used to build the model; essentially identical at 7 years. 
     At 4 years the values are .70 and .69, less than 1 std apart.
-    (Tgw better performance before year 1.5 is an unexplained oddity.)
+    (The better performance before year 1.5 is an unexplained oddity.)
   \item Concordance gets worse over time, which is not a surprise.
     Outcomes farther in the future are harder to predict in essentially all
     areas of life, survival time is no exception.
@@ -513,7 +601,13 @@ The plot is very interesting.
     larger variance at those later times.
 \end{itemize}
   
-The IJ variance used by the \code{concordance} function allows computation
+Why is the DTC variance so much larger? As $\tau$ increases the RTTR algorithm
+has set more and more observations' weight to zero: by time 6 354/686 = 52\%
+of them. The induced 0/1 variable has counts of 296 and 36; and we know that for
+binomial data the precision of an estimate is proportional to the smaller
+group.
+
+The IJ variance used by the \code{concordance} function also allows computation
 of a variance for the difference between any two of the methods.
 <<ijvardiff>>=
 # To be filled in
@@ -523,8 +617,431 @@ The plot does not tell us \emph{which} $\tau$
 cutoff to use, that has to be decided based on the goals of the validation
 study.  
 
+\subsubsection*{Age scale}
+Using age as the time scale does not change the underlying computation for
+the concordance: for the death of observation $i$ at age $a_i$, the rank of
+$\eta_i$ is compared to that for all others which are alive and at risk at that 
+age.  The total number of comparable subjects at risk at any given moment is
+lower, however, leading to far fewer pairs and a small increase in the 
+standard error.
+
+<<ageconcord>>=
+c5 <- concordance(rfit5)
+c6 <- concordance(rfit6)
+c5
+c6
+
+sum(c6$count[1:2])/ sum(c5$count[1:2])
+
+gbsg3 <- survSplit(Surv(rfstime, rfs) ~ ., gbsg2, cut= seq(.5, 8, .5))
+gbsg3$age1 <- with(gbsg3, age + tstart)
+gbsg3$age2 <- with(gbsg3, age + rfstime)
+concordance(rfit6, newdata=gbsg3)
+@ 
+
+Translation of the DTC to age scale is difficult.  On a purely
+technical level, the RTTR algorithm is no longer available so there is
+not a simple way to create the 0/1 variable. 
+More challenging perhaps than this is the question of what 0/1 variable
+one would define, even if there were no censoring. 
 
 \section{Expected number of events}
+One of the more flexible, but unfortunately less known methods is to assess
+the observed and expected number of events.  It is based on the simple
+fact that if the model is correct then the counting process 
+$N_i(t)- \Lambda(t; x_i)$ is a martingale.
+More importantly, there can be a separate stopping point for each subject,
+i.e., $N_i(t_i) - \Lambda_i(t_i; x_i)$ is a martingale, where $t_i$ is the
+observed follow-up time of subject $i$.
+This is a variant of the well known gambler's ruin: no stopping strategy can
+change the long run outcome of a game of chance.
 
+Berry shows that $N_i$ has the same likelihood function, up to a constant,
+as a Poisson distribution with rate parameter $\Lambda_i$.
+We can thus assess the goodness of fit using simple glm fits.
+The compensator $\Lambda_i(t_i)$ is the predicted number of events
+for each subject, which is obtained from the predict function.
+
+<<expected1>>=
+gbsg2$expect <- predict(rfit5, type='expected', newdata=gbsg2)
+gbsg2$eta    <- predict(rfit5, type="lp", newdata=gbsg2)
+
+temp <- with(gbsg2, c(Observed=sum(rfs), Expected= sum(expect),
+             "O/E"= sum(rfs)/sum(expect)))
+round(temp,3)
+
+gfit1 <- glm(rfs ~ offset(log(expect)), poisson, gbsg2, subset=(expect > 0))
+summary(gfit1)
+temp2 <- coef(gfit1) + sqrt(vcov(gfit1))[1,1] *c(0, -1.96, 1.96)
+names(temp2) <- c("O/E", "lower CI", "upper CI")
+round(exp(temp2), 3)
+@ 
+
+Over the full follow-up time, the gbsg data has 20\% more deaths than
+predicted by the model, given the covariates. This total excess is
+known as mean calibration.
+This is also as a standardized mortality ratio (SMR), though that term is
+more common when the predicted death rate is based on national life tables.
+
+The use of \verb!subset= (expect >0)! deserves comment.  When there
+are observations in the validation data set that are censored before the
+first event in the training data (there are 7 such in the GBSG data), then
+the Poisson log-likelihood has a term of $0\log(0)$.
+Using L'H{\^o}pital's rule we know that this is 0; thus these observations do not
+contribute to the loglik and can be omitted.
+The \code{glm} function does not know calculus, however, and will generate NA
+if these observations are retained.
+
+We can also look at the accumulation of observed and expected over time.
+This is currently a bit clumsy in the software, a \code{tmax} argument in
+the \code{predict} function, similar to ymax in concordance, would make this
+simpler. Nevertheless:  
+
+<<overtime>>=
+tau <- seq(.2, 7.3, length=200)
+oe <- matrix(0, length(tau), 2)
+tdata <- gbsg2
+for (i in 1:nrow(oe)) {
+    tdata$rfstime <- pmin(gbsg2$rfstime, tau[i])
+    tdata$rfs <- ifelse(gbsg2$rfstime>tau[i], 0, gbsg2$rfs)
+    pp <- predict(rfit5, newdata=tdata, type='expect')
+    oe[i,] <- c(sum(tdata$rfs), sum(pp))
+}
+opar <- par(mar=c(5,5,1,5))
+tfun <- function(x) (x-.3)* 300
+matplot(tau, cbind(oe, tfun(oe[,1]/oe[,2])), type='l', lty=1, 
+                   lwd=2, col=1:3,
+        xlab= "Cutoff time", ylab="Counts")
+z <- seq(.4, 1.2, by=.2)
+axis(4, tfun(z), z, las=1)
+mtext("O/E", side=4, line=2, las=1, padj= -3) # move it away from 0.8 axis label
+legend(4, 180, c("Observed", "Expected", "Observed/Expected"),
+       lty=1, lwd=2, col=1:3, bty='n')
+abline(h= tfun(c(1,1.2)), col='gray', lty=3)
+par(opar)
+@ 
+
+The observed RFS events start out as less than expected for the first half
+year, then catch up by year 1, and slowly rise from 1.1 to 1.2 times expected
+from year 2--7. 
+We have not yet made the crucial decision about the time period of interest.
+Do we want to know about predictive behavior over the first year, first 2 years,
+5?  The correct answer depends of course on the application at hand.
+This data set pair has been widely used for dicussion of validation, and most
+of those papers have chosen 5 years without any explicit argument for that
+time point. 
+Looking ahead, however, we might see the popular RTTR based methods
+begin to have issues after 5 years, in the same way as the DTC statistics
+in Figure \ref{fig:gbsg5}.
+In order to facilitate doing validation over the range of 0--5 years,
+add 3 more variables to the gbsg2 dataset: rfstime5, rfs5, and expect5.
+
+<<add5>>=
+tdata <- gbsg2
+tdata$rfs <- ifelse(tdata$rfstime >5, 0, tdata$rfs)
+tdata$rfstime <- pmin(tdata$rfstime, 5)
+gbsg2$rfstime5 <- tdata$rfstime
+gbsg2$rfs5 <- tdata$rfs
+gbsg2$expect5 <- predict(rfit5, tdata, type='expected')
+
+gfit5 <- glm(rfs5 ~ offset(log(expect5)), poisson, data=gbsg2,
+             subset= (expect5 > 0))
+exp(coef(gfit5))   # over the shorter interval, the SMR is approx 1.18
+@ 
+
+
+The next level of assessment is to look at the exess as a function of
+the prediction, known as a calibration plot.
+The predict call below uses expect=1 to get the death rate relative to the 
+ideal of
+1.0, which would be perfect match to the predicted events. 
+We have added horizontal lines at 1.0 and at the overall excess.
+In this case, the excess does not appear to be related to the per-subject
+risk, e.g., it is not limited to the highest or lowest risk subjects.
+The hint of a drop near the left is only a hint, at no point does the
+95\% pointwise confidence band exclude the overall value of 1.2.
+A scaled density of the eta values is has been added to the bottom.
+There are a 60 subjects with $\eta < -.5$, risk .6 of predicted, 12 events
+and
+eventsbut the small number of events
+
+<<gfit2, fig.caption="Calibration plot using observed/expected deaths">>= 
+gfit2 <- update(gfit1, . ~ . + nsp(eta, 4))
+xx <- seq(min(gbsg2$eta), max(gbsg2$eta), length=100)
+yhat <- predict(gfit2, newdata= data.frame(eta=xx, expect=1), se=TRUE)
+yy <- yhat$fit + outer(yhat$se.fit, c(0, -1.96, 1.96), '*')
+
+matplot(xx, exp(yy), type='l', lty=c(1,2,2), lwd=c(2,1,1), log='y', col=1,
+        ylim=c(.5, 2), 
+        xlab="Linear predictor", ylab="Excess event rate")
+abline(h=c(1, 1.2), col='gray', lty=2:1)
+#rug(gbsg2$eta)
+temp <- density(gbsg2$eta, adjust=.5)
+tfun <- function(y) .5 + (y-min(y))/(4*diff(range(y))) # 4 "looks good"
+lines(temp$x, tfun(temp$y), lty=3, col=4)
+abline(h=.5, lty=2, col=4)
+@
+
+We can also divide the predicted risk score \code{eta} into bins to create a
+tableau reminiscent of the Hosmer-Lemishow approach in binomial data.
+In this case we lack any formal justfication for treating the last row as
+components of a chi-square statistic.
+
+<<gfit3>>=
+bins <- with(gbsg2, cut(eta, quantile(eta, 0:5/5), include.lowest=TRUE,
+                        labels= paste0("Q",1:5)))
+counts <- rbind(observed= tapply(gbsg2$rfs, bins, sum),
+                expected= tapply(gbsg2$expect, bins, sum))
+counts <- rbind(counts, "O/E"= counts[1,]/counts[2,],
+                "(O-E)^2/E"  = (counts[1,]-counts[2,])^2/counts[2,])
+round(counts,2)
+@ 
+
+If we repeat the plot for 5 year data there is no substantive change.
+I use the termplot function below, which centers curves at the grand mean,
+the horizontal line at 0 is equivalent to one at 1.17 on the uncentered plot.
+
+<<gfit5b>>=
+gfit5b <- update(gfit5, . ~ .+ nsp(eta,3))
+termplot2(gfit5b, se=TRUE)
+abline(0,0, col='gray')
+@ 
+
+More useful may be to look at components of the risk score.
+\begin{itemize}
+  \item The first fit \code{gfit3a} reveals nothing of consequence.
+  \item Because the GBSG data set has subjects who are grade 1--3 while the 
+    Rotterdam data had only 2--3, a second fit looks at the three grades
+    separately.  Grade was modeled as an integer, and the pattern of excess
+    risk coefficients suggests that perhaps the 1-2 increment in risk is in
+    actuality larger than the 2-3 increment. (The model has overestimated risk
+    for grade 1 and underestimated for grade 2).  The overall ANOVA suggests
+    that this could be random variation, however.
+  \item A similar check is made for the three size categories. The medium
+    group, which has 66\% of the cases, is almost identical to the overall:
+    exp(.186)= 1.204.  There is a hint of a trend, but neither the ANOVA or
+    a trend test are significant.
+  \item For nodes, we have broken the distrbution into four approximatley
+    even groups and look at the excess per group.  There is not a consistent
+    pattern of excess: largest for 1 node, smallest for 2--3, and intermediate
+    for 4--7 and 8+. 
+   \item Last we look at age, fitting a spline to the excess.
+\end{itemize}
+
+<<gfit4>>=
+gfit3a <- update(gfit1, . ~. +  meno + grade + hormon)
+pcoef <- function(x) printCoefmat(summary(x)$coefficients, digits=2)
+pcoef(gfit3a)
+
+gfit3b <- update(gfit1, . ~. + factor(grade) -1)
+pcoef(gfit3b)
+with(gbsg2, table(grade))    # nicer label than table(gbsg2$grade)
+anova(gfit1, gfit3b, test="Chisq")
+
+gfit3c <- update(gfit1, . ~ . + size -1)
+printCoefmat(summary(gfit3c)$coef, digits=2)
+with(gbsg2, table(size))
+anova(gfit1, gfit3c, test="Chisq")
+
+ngrp <- cut(gbsg2$nodes, c(0,1,3,7, 60), c('1', '2-3', '4-7', '8+'))
+table(ngrp)
+gfit3d <- update(gfit1, . ~ . + ngrp -1)
+pcoef(gfit3d)
+round(exp(coef(gfit3d)), 2)
+anova(gfit1, gfit3d, test="Chisq")
+
+# move boundary knots in from the edge a bit, which I prefer
+gfit3e <- update(gfit1, . ~ . + nsp(age, df=4, trim=.05))
+termplot2(gfit3e, se=TRUE)  
+abline(0,0, lty=3)
+rug(jitter(gbsg2$age))
+anova(gfit1, gfit3e, test="Chisq")
+
+# redraw this directly on the excess risk scale
+dummy <- data.frame(age=21:80, expect=1)
+yhat <- predict(gfit3e, newdata=dummy, se.fit=TRUE)
+yy <- yhat$fit + outer(yhat$se, c(0, -1.96, 1.96), '*')
+matplot(21:80, exp(yy), log='y', type='l', lty=c(1,2,2),lwd=c(2,1,1), col=1,
+        xlab="Age", ylab="Excess death rate")
+abline(h=1.2, col='gray')
+@ 
+
+The age check shows a systematic bias in the predicted versus observed risk,
+and it is statistically significant. 
+How do we parse this out?  The quartiles of age in the GBSG study are 46 and 61,
+so approximately the middle half of the subjects lie in the upward trending
+portion of the plot.  Referring back to the coxph fit, the predicted risk score
+drops over this interval (lower risk at 61).
+The coxph model predicts that the hazard drops by around 15\% over this region,
+the gbsg data says ``perhaps not so much''.
+One way to look at this is to directy fit age in the GBSG data, holding all
+other coefficients at the rotterdam fit values.
+
+Note-- some further work makes be believe that there is something wrong with
+the last plot above.  Come back to this later
+
+
+\section{Survival models}
+A perhaps obvious approach to the censored data in the validation data set
+is to use standard censored methods of the Kaplan-Meier, Cox model, etc.
+ 
+One simple approach is to compare the predicted survival curve for the
+validation cohort, based on the model, with the KM of the validation
+cohort.
+For the predicted curve we need to use the proper marginal estimate which is
+\begin{align}
+  \overline S(t) &= (1/n) \sum_{i=1}^n \hat S(t; x_i) \label{direct}\\
+   & \ne \hat S(t; \overline x) \label{dbad}
+\end{align}
+where $x$ is the set of covariate vectors for the $n$ validation samples
+and $\hat S$ is prediction using the target model.
+Equation \eqref{direct} is called the direct adjusted survival, or in more
+recent years as a $g$-estimate.
+The curve at the mean covariate, equation \eqref{dbad} is not the same.
+
+<<>>=
+direct <- survfit(rfit5, newdata=gbsg2)
+dim(direct)
+
+plot(gsurv, fun='event', lwd=c(2,1,1), 
+     xlab="Years since enrollment", ylab= "Death")
+dtemp <- direct
+dtemp$surv <- rowMeans(direct$surv)
+dtemp$std.err <- NULL
+lines(dtemp, fun='event', conf.int=F, lwd=2, col=2)
+legend(0, .6, c("Observe GBSG survival", "Predicted"), col=1:2, lwd=2, bty='n')
+
+temp1 <- 1- summary(gsurv, time=4:7)$surv
+temp2 <- 1- summary(dtemp, time=4:7)$surv # predicted death at years 4:7
+round(temp1/temp2,3) 
+@ 
+
+Object \code{direct} contains 686 separate predicted survivals, one per subject.
+Their average is the cohort survival.
+Exacly as in the SMR plot, we see that the observed deaths start out a little
+smaller than expected over the first few months, are about equal at 1 year, and
+greater than expected after 2 years.
+The ratio of probability of death at 4--7 years is identical to the SMR, but
+not dissimilar in size.
+
+The more common approach is to fit a Cox model with eta as the only covariate,
+as a way to assess the linearity of the relationship.
+
+<<dcox, fig.cap="A check for systematic effect versus the risk score.">>=
+cfit1 <- coxph(Surv(rfstime, rfs) ~ eta, gbsg2)
+cfit2 <- coxph(Surv(rfstime, rfs) ~ eta + offset(eta), gbsg2)
+cfit1
+cfit2
+cfit3 <- coxph(Surv(rfstime, rfs) ~ nsp(eta, 4) + offset(eta), gbsg2)
+
+termplot2(cfit3, term=1, se=TRUE, ylab="Estimated effect of risk score")
+abline(0,0, lty=2, col=2)
+@
+Fit cfit1 is often called regression calibration, a good model should have
+a coefficient of 1.
+A test for $\beta=0$ in cfit2 is an easy way to test $\beta=1$ in cfit1.
+Likewise checking for a horizontal line in figure \ref{fig:dcox} is a visual
+check for systematic differences in the calibration as a function of $\eta$.
+Notice that this is very similar to the calibration plot in 
+figure \ref{fig:gfit2}, with two differences. First, figure \ref{fig:dcox} is
+centered at zero, which is a consequence of refitting the model using coxph:
+O-E residuals are now guarranteed to sum to zero within the validation 
+(these are the martingale residuals for the fit.)
+Because of the new baseline hazard, the figure can only assess relative
+change, not absolute.  Second, the confidence intervals in figure \ref{fig:gfit2}
+are a bit wider, since they also account for estimation of the intercept.
+(One can argue over which of these is the more useful choice.)
+
+The more common plot is to compute predicted survival for both the prediction
+model and the refit model for a chosen time $\tau$ and range of risk scores eta,
+and then compare them on the same graph, what I call a $\yhat$ vs. $\yhat$ plot.
+An alternative but less common figure is to plot all times for a fixed risk 
+score eta.
+
+<<eta2>>=
+d2 <- survfit(cfit1, newdata=gbsg2)
+indx <- order(gbsg2$eta) # need to be in eta order to draw lines
+yrs1 <-  findInterval(c(2,4,6), d2$time)
+yrs2 <-  findInterval(c(2,4,6), direct$time)
+temp1 <- t(d2$surv[yrs1,indx])   # Refit survival
+temp2 <- t(direct$surv[yrs2, indx]) # Predicted survival
+matplot(gbsg2$eta[indx], 1- cbind(temp2, temp1), type='l', lwd=2,
+        lty=c(1,1,1,2,2,2), col=1:3, xlab="Linear Predictor",
+        ylab="Predicted Death Rates, across subjects")
+legend("topleft", outer(paste("Year", c(2,4,6)), c("Model", "Refit"), paste),
+       lty=c(1,1,1,2,2,2), col= 1:3, lwd=2, bty='n')
+matplot(temp2, temp1, type='l', lwd=2, col=1:3, lty=1, 
+        xlab="Model predicted survival", ylab="Refit predicted survival")
+abline(0,1)
+legend(.6, .3, c("At year 2", "At year 4", "At year 6"), lwd=2, lty=1, col=1:3)
+@ 
+
+The final plot above, for a single follow-up year $\tau$, is introduced in
+\ref{harrellxxx}, with a couple of changes. 
+The first is to realize that the accuracy of the ``refit'' survival estimate
+requires that the refit model be correct, in particular the proportional
+hazards assumption. They recommend fitting a more flexible model to address
+this, and we agree. A check of PH for cfit1 shows issues, for instance; we
+might add a time by eta interaction.  (To do, show this.)
+
+ The KM comparison above is not subject to the modeling issues and gives
+a clear visual read of the lack of calibration.  However, the model fits allow 
+for
+more nuanced exploration, in particular how the calibration accuracy may
+change over values of the linear predictor or other covariates.
+A second difference is their use of the label ``observed survival'' on the
+y-axis of the above plot, which we do not agree with.  The
+plot is a comparison of the the validation model's prediction to 
+another estimate of survival.
+Given the presence of censoring this new $\yhat$ may be one of the best 
+estimates possible,
+using as it does our best censored data tools, but it is still an estimate.
+
+To do: Add plot of $S(t; \eta=\eta_0)$ with $\hat S$ from the validation model
+and from the refit model, 2 curves on one graph.
+
+\paragraph{Age scale models}
+Some portions of the above are unchanged by the use of age as the time scale,
+namely the model fits and displays of cfit1, cfit2, and cfit3 above.
+What does change are survival curves: we can now create predicted curves
+for any combination of starting age and linear predictor $\eta$, and display
+their results either over eta for a selected time $\tau$, or over time for
+selected $\eta$. 
+To do: show it.
+
+\section{Binomial methods}
+Binomial methods are the most popular, but we have left them for third.
+The overall approach is 
+\begin{itemize}
+  \item Choose a target time $\tau$
+  \item Use the RTTR (or IPW) approach to reassign the case weights of all
+    those observations $t_i$ in the validation data set which are 
+    censored before $\tau$ to other observations $j$ with $t_j > t_i$.  
+    In the resulting data all observations with
+    non-zero weight will have a known 0/1 status at time $\tau$.
+  \item Apply well known  measures for binomial data to the new data, 
+    e.g., sensitivity, specificity, logistic regression, etc.
+\end{itemize} 
+
+We have already encounterd this in the discrete time concordance.
+
+Todo: fill in examples. 
+Todo: Show that Brier score is an RTTR estimate as well.  
+If $R^2 = 1- numerator/denominator$, Brier= numerator and Kattan = N/D (for a
+binomial response).
+
+\section{Synthetic estimates}
+ Royston and Saurbrei's D, xxx C, ...  They are inapproapriate because they 
+assume things which we want to test.
+
+\section{Summary}
+ Binomial estimates are familiar but have higher variance (sometimes a lot).
+
+ A goal should not be to ``test'' for validity, but to explore in what facets
+the estimate does or does not perform well: covariate patterns, risk score, time
+ranges, metric, etc.  Then focus on the specific use case.
+
+\bibliographystyle{plain}
+\bibliography{refer}
 
 \end{document}
