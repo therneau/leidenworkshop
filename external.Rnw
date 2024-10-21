@@ -28,25 +28,14 @@ suppressMessages(library(survey))
 load("data/amyloid.rda")  # temporary source
 
 opts_chunk$set(comment=NA, tidy=FALSE, highlight=FALSE, echo=TRUE,
-               fig.width=4.5, fig.height=3, fig.path="figures/",
+               fig.width=6.5, fig.height=4, fig.path="figures/",
                device="pdf", dev.args=list(pointsize=8),
                cache=TRUE,   background="#ffffff",
                prompt=TRUE, 
-               strip.white=FALSE, mymar=TRUE)
+               strip.white=FALSE)
 options(contrasts= c("contr.treatment", "contr.poly"),
         show.signif.stars = FALSE, continue=" ", width=70)
 
-# because "mymar" is set to TRUE above, this hook will be run on every chunk.
-# it sets the margins, font, etc to values that work
-knit_hooks$set(mymar= function(before, options, envir) {
-    if (before) {
-        look.for <- c("mar", "font", "cex")  # options we want
-        plist <- options[match(look.for, names(options), nomatch=0)]
-        if (is.null(plist$mar)) plist$mar <- c(4, 4, .5, .5)
-        if (is.null(plist$cex)) plist$cex <- 1
-        do.call("par", plist)
-    } else NULL
-})
 
 palette("Okabe-Ito") # color blind friendly
 @
@@ -410,34 +399,34 @@ light chain amyloidosis to assess the performance of 4 different predicition
 models that had appeared in the literature.
 Each of the models categorizes patients into 3-5 discrete stages of disease,
 and survival curves are based on those strata. 
-The \code{amyloid.surv} data set contains digitized curves from the papers,
+The \code{amyloidmodel} data set contains digitized curves from the papers,
 and \code{amyloid} the survival times and per-model risk groups for each of
 the validation subjects.
 
 <<amcurve1>>=
 opar <- par(mfrow=c(2,2), mar=c(5,5,1,1))
-plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloid.surv,
+plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel,
      type='l', subset= (study==2004 & stage==0))
 for (i in 1:2)
-    lines(survival ~ month, data=amyloid.surv, subset=(study==2004 & stage==i),
+    lines(survival ~ month, data=amyloidmodel, subset=(study==2004 & stage==i),
           col= i+1, lty=i+1, lwd=2)
 text(40, .9, "2002", cex=1.5)
 
-plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloid.surv,
+plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel,
      type='l', subset= (study==2012 & stage==0))
 for (i in 1:3)
-    lines(survival ~ month, data=amyloid.surv, subset=(study==2012 & stage==i),
+    lines(survival ~ month, data=amyloidmodel, subset=(study==2012 & stage==i),
           col= i+1, lty=i+1, lwd=2)
 text(40, .9, "2012", cex=1.5)
 
-plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloid.surv,
+plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel,
      type='l', subset= (study==2015 & stage==0))
 for (i in 1:3)
-    lines(survival ~ month, data=amyloid.surv, subset=(study==2015 & stage==i),
+    lines(survival ~ month, data=amyloidmodel, subset=(study==2015 & stage==i),
           col= i+1, lty=i+1, lwd=2)
 text(40, .9, "2015", cex=1.5)
 
-afit <- survfit(Surv(months, status) ~ number.organs, amyloid)
+afit <- survfit(Surv(month, status) ~ number.organs, amyloid)
 plot(afit, lty=1:4, col=1:4, lwd=2, xlab="month", ylab="survival")
 text(80, .9, "Validation", cex=1.5)
 par(opar)
@@ -469,7 +458,7 @@ The \code{udca} data set contains early results of a trial of usrodoxycholic
 acid (UDCA) versus placebo for treatment of the disease;
 ``early'' in the sense that 3 years' enrollment plus 5 years of follow-up had
 produced only 16 deaths. 
-Estimating the coefficients for the risk score variables, de novo within this
+Estimating the coefficients for the 5 risk score variables, de novo within this
 study, while also getting an estimate of treament effect is simply not feasable.
 However, we can use the PBC fit as a direct estimate of the expected death 
 rate.
@@ -493,6 +482,7 @@ udca2 <- subset(udca2, !is.na(riskscore))
 \subsection{Monoclonal gammopathy}
 Early enrollment predicting late enrollment.  Semi-competing risks.
 Yet to be done.
+
 \subsection{Dementia and Death}
 Fits from a fixed population (Mayo Clinic Study of Aging) applied to 
 data from the Alzheimer's Disease Neuroimaging Initiative (ADNI)
@@ -516,8 +506,13 @@ For $X$ and $Y$ from a continuous bivariate distribution it is defined as
  C &= P(X_i> X_j | Y_i > Y_j) \\
    &= P(Y_i> Y_j | X_i > X_j)
 \end{align*}
-(The two forms are numerically equivalent, just with a 
-different viewpoint.)
+The two forms are numerically equivalent, just with a 
+different viewpoint. Image that a local newpaper has predicted the outcome of
+the mayor's race for 20 years. 
+We could take a forward looking view and ask how often the voter's followed 
+what the what the paper predicted (y given x), 
+or a backwars in time view and ask how often the paper guessed correctly 
+(x given y).  In either case the estimate is (total correct)/(total contests).
 In the present case replace $X$ with the model predictions $\yhat_i$,
 and $Y$ with $t_i$, the observed survival times.
 A pair of observations is concordant if the ordering of the results agrees with
@@ -527,15 +522,17 @@ One numerical wrinkle has to do with ties.  There have been various suggestions,
 which the concordance vignette lays out in detail.
 Here we only summarize the results
 \begin{itemize}
-  \item For $C$ count ties in $t$ as uninformative, such pairs count as neither
+  \item For $C$ count ties in the response time $t$ as uninformative, 
+    such pairs count as neither
     concordant or discordant.  Ties in the predictor $\hat y$ count as 1/2.
-  \item If the response is a 0/1 variable, then $C$ = AUROC, the area under the
-    receiver operating curve, which is well established for binary outcomes.
-    (Proving this simple theorem is harder than it looks, but the result is
-    well known.)
   \item For survival data, pairs such as (5+, 7) as also treated as
     uninformative.  We do not know if subject 1 (censored at 5) will or 
     will not have a survival time greater than subject 2 (event at 7).
+  \item If the response is a 0/1 variable, then $C$ = AUROC, the area under the
+    receiver operating curve, a metric which is well established for binary 
+    outcomes.
+    (Proving this simple theorem is harder than it looks, but the result is
+    well known.)
 \end{itemize}
 
 The concordance has a natural interpretation as an experiment: present pairs
@@ -544,6 +541,7 @@ oracle, and count the number of correct predictions.
 Pairs that have the same outcome $y_i=y_j$ are not put forward
 for scoring, since they do not help discriminate a good oracle from a bad one.
 If the oracle cannot decide (gives them a tie) then a random choice is made.
+This leads to a score of 1/2 for ties.
 
 As a measure of association the concordance has two interesting
 properties.  The first is that that the prediction can be shifted by an
@@ -639,7 +637,7 @@ for (i in 1:151) {
     temp <- with(gbsg2,ifelse(rfs==1 & ryear <= tau2[i], 1, 0))
     c3 <- concordance(temp~ eta1, data=gbsg2, weight=reweight[,i],
                       subset=(reweight[,i] > 0))
-    c4 <- concordance(rfit1, ymax=tau[i]) # concordance of the training data
+    c4 <- concordance(rfit1, ymax=tau2[i]) # concordance of the training data
     Cstat[i,,1] <- c(coef(c1), sqrt(vcov(c1)))
     Cstat[i,,2] <- c(coef(c2), sqrt(vcov(c2)))
     Cstat[i,,3] <- c(coef(c3), sqrt(vcov(c3)))
@@ -708,7 +706,7 @@ matplot(tau2, C2[,1,1:3], lwd=2, lty=1, col=1:4, type='l', ylim=c(.6, .86),
         xlab="Cutoff time tau", ylab="C")
 legend(1, .86, c("default wt", "S/G weight", "DTC", "Model 1"),
        lwd=2, lty=c(1,1,1,3), col=1:3, bty='n')
-matlines(tau2, Cstat[,1,1:3], lwd=1, lty=3, col='gray')
+matlines(tau2, Cstat[,1,1:3], lwd=2, lty=3, col='gray')
 @ 
 
 The concordance lines for model 1 have been added in gray. We see that model
@@ -760,7 +758,7 @@ the 2012, 2013 and 2015 modifications of the 2004 score do seem to give
 a slight improvemet.
 
 <<aconcord>>=
-cfit <- concordance(Surv(months, status) ~ number.organs + r2004 + r2012 + 
+cfit <- concordance(Surv(month, status) ~ number.organs + r2004 + r2012 + 
                         r2013 + r2015, amyloid, reverse=TRUE)
 cfit
 @
@@ -1063,7 +1061,7 @@ for (i in 1:3) {
         indx1 <- which(vstage== stage)
         indx2 <- which(tdata$stage == stage)
 cat(i,stage, "  ")
-        amexpect[indx1, i] <- efun(amyloid$months[indx1], tdata$month[indx2],
+        amexpect[indx1, i] <- efun(amyloid$month[indx1], tdata$month[indx2],
                                    tdata$survival[indx2])
     }
 }
@@ -1257,7 +1255,7 @@ curve of the validation data along with a predicted curve from the
 prediction models.  It is easiest to do by stage.
 
 <<amsurv1>>=
-asurv15 <- survfit(Surv(months, status) ~ r2015, amyloid)
+asurv15 <- survfit(Surv(month, status) ~ r2015, amyloid)
 plot(asurv15, col=1:4, lwd=2, xlab="Months", ylab="Survival")
 for (i in 0:3) {
     temp <- subset(amyloid.surv, stage==i & study== 2015)
@@ -1276,7 +1274,7 @@ Nevertheless, we can see that the greatest gains in survival were for stages
 0 and 1.
 
 <<amsurv2>>=
-asurv12 <- survfit(Surv(months, status) ~ r2012, amyloid)
+asurv12 <- survfit(Surv(month, status) ~ r2012, amyloid)
 plot(asurv15, col=1:4, lwd=2, xlab="Months", ylab="Survival")
 for (i in 0:3) {
     temp <- subset(amyloid.surv, stage==i & study== 2012)
