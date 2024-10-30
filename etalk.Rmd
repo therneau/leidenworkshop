@@ -1,0 +1,395 @@
+---
+title: Thoughts on validation
+author: Terry Therneau
+date: Oct 2024
+output: beamer_presentation
+---
+
+```{r, echo=FALSE}
+library(knitr)
+library(survival)
+library(splines)
+load("data/amyloid.rda")
+
+opts_chunk$set(comment=NA, tidy=FALSE, highlight=FALSE, echo=FALSE,
+               fig.path="figures/",
+               cache=TRUE, background="#FFFFFF",
+               warning=FALSE, error=FALSE)
+options(contrasts= c("contr.treatment", "contr.poly"),
+        show.signif.starts = FALSE, continue=" ", width=60)
+par(mar=c(4.1, 4.1, 1.1, 1.1))
+library(survival)
+library(splines)
+palette("Okabe-Ito")
+```
+
+# Validation
+
+ * Software validation.  This is discussed in the validation vignette.
+ * Internal validation: checks that further examine the fit of a
+          model, using the original data set.  These form an extension of
+          the familiar trio of functional form, proportional hazards, and
+          undue leverage which have been discussed elsewhere. 
+ * External validation. Application of a model to new data set, one which
+    was not used in the model's construction.
+
+# What does it mean to validate?
+
+``If you don't know where you are going, you might end up someplace else.''
+-- Yogi Berra
+
+Question: Is a chosen model M applicable outside of the data set
+ on which it was developed?
+
+ * Applicable to what? 
+   - Korn and Simon (1990), Measures of explained variation for survival 
+      data
+   - Altman and Royston(2000), What does it mean to validate a model
+ * Say $(t_i - \hat t_i)^2$ is the measure.  Are the pair (.5, 1)
+    and (5.5, 6) the same size error?  Is (5.5, 6) an error at all?
+ * We want to use M to select subjects with expected survival of $<6$
+    months for referral to supportive care
+      - How well it predicts someone with 1 year vs 2 year is immaterial
+      - We just need a yes/no wrt  6 months
+  * Use M for a proposed biologic therapy
+      - No anticipated effect on deaths within 1 year
+      - Separation of 2, 3, 4+ important for stratification
+
+
+# Dimensions
+  * There are at least 3 possible assessments
+      1. The expected number of visits to state $j$, $E(N_j(t))$
+      2. The probability in state $j$, $p_j(t)$
+      3. The expected total sojourn time in state $j$, $s_j(t)$
+  * Each of these can be assessed at one or more chosen times $\tau$.
+  * The validation data set is subject to censoring.
+  * Validation metrics
+  
+# Censoring methods
+  1. Apply standard censored data methods to the validation data, and compare
+    the results to the target model's predictions.  I will sometimes call this
+    the ``yhat vs yhat'' approach.
+  2. Create uncensored data specific to a chosen assessment time $\tau$,
+    then use standard methods for uncensored data. Two approaches are
+      * Use the redistribut-to-the-right (RTTR, IPC) algorithm to reassign 
+        the 
+        case weights of those observations censored prior to $\tau$ to others,
+        resulting in a weighted subset who status at $\tau$ is known.
+      * Replace the response with pseudovalues at time $\tau$.
+  3. For assessment type 1, the total number of events, we can compare the
+    observed events to the expected number given per-subject followup.
+	 * Essentially a standardized mortality ratio (SMR, SIR) approach
+	 * If the model is correct $N(t)- \Lambda(t)$ is a martingale, 
+		even if everyone has a different cut off time.
+  4. Ignore censoring. 
+
+Ideal order: 3 1 2 4; in the literature 2 4 1 3
+
+# Validation metrics
+ * Discrimination: are the predictions in the right order
+ * Calibration: are the predictions accurate, on an absolute scale
+   - total is correct
+   - linear rise of observed and predicted
+   - pattern wrt prediction
+   - responsive to individual covariates and combinations
+
+# Complaint
+   * We know a lot about assessing binomial data (sensitivity, specificity,
+     PPV, AUROC, \ldots)
+   * Good literature on validating binomial data
+   * Literature on validating time to event data too often forces survival
+     data onto a Procrustean bed.
+
+# Data
+ * Rotterdam: 2982 primary breast cancers recorded in the Rotterdam Tumor Bank
+ * GBSG: 686/720 subjects from a 1984-1989 trial conducted by the German Breast
+	Cancer Study Group.
+ * Build a model on the Rotterdam data
+   - ignoring GBSG
+   - allow imperfection
+ * Validate it on GBSG
+  
+---
+
+```{r, breast1}
+gsurv <- survfit(Surv(rfstime/365.25, status) ~1, gbsg)
+rott2 <- rotterdam
+rott2$rfs <- with(rott2, pmax(recur, death))
+rott2$ryear <- with(rott2, ifelse(recur==1, rtime, dtime))/365.25  # years
+rsurv <- survfit(Surv(ryear, rfs) ~ I(nodes==0), rott2)
+
+plot(rsurv, lty=2:3, lwd=2, conf.int=FALSE, fun="event",
+     xlab="Years since enrollment", ylab="Death")
+lines(gsurv,  lwd=2, lty=1, fun="event", conf.int=FALSE)
+legend(10, .4, c("GBSG", "Rotterdam node positive", "Rotterdam node negtive"),
+       lty=1:3, lwd=2, bty='n')
+```
+
+---
+
+```{r, breast2}
+rfit <- coxph(Surv(ryear, rfs) ~ meno + size + grade + pspline(nodes), rott2)
+#print(rfit, digits=1)
+
+# I dislike the color choices of termplot
+termplot2 <- function(fit, ...) termplot(fit, col.term=1, col.se=1, ...)
+termplot2(rfit, term=4, se=TRUE)
+abline(v=9, col="gray")
+```
+
+```{r, breast3}
+rott2$node8 <- pmin(rott2$nodes, 8)
+rfit1 <- coxph(Surv(ryear, rfs) ~  meno + size + grade+ node8, rott2)
+rfit2 <- update(rfit1, . ~. + pspline(age) + hormon)
+
+gbsg2 <- gbsg
+gbsg2$sizec <- gbsg2$size  # sizec= continuous size in mm
+gbsg2$size <- cut(gbsg2$sizec, c(0,20, 50, 500), c("<=20", "20-50", ">50"))
+#gbsg2$pgr3 <- with(gbsg2, pmax(30, pmin(200, pgr)))
+gbsg2$rfs  <- gbsg2$status
+gbsg2$ryear <- gbsg2$rfstime/365.25
+gbsg2$node8 <- pmin(gbsg2$nodes, 8)
+gbsg2$eta1  <- predict(rfit1, newdata=gbsg2) # risk score under first model
+gbsg2$eta2  <- predict(rfit2, newdata=gbsg2) # under model 2
+```
+
+# Amyloidosis
+
+```{r, amyloid}
+opar <- par(mfrow=c(2,2), mar=c(5,5,1,1))
+plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel,
+     type='l', subset= (study==2004 & stage==0))
+for (i in 1:2)
+    lines(survival ~ month, data=amyloidmodel, subset=(study==2004 & stage==i),
+          col= i+1, lwd=2)
+text(40, .9, "2002", cex=1.5)
+
+plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel,
+     type='l', subset= (study==2012 & stage==0))
+for (i in 1:3)
+    lines(survival ~ month, data=amyloidmodel, subset=(study==2012 & stage==i),
+          col= i+1, lwd=2)
+text(40, .9, "2012", cex=1.5)
+
+plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel, col=4,
+     type='l', subset= (study==2015 & stage==3))
+for (i in 0:2)
+    lines(survival ~ month, data=amyloidmodel, subset=(study==2015 & stage==i),
+          col= i+1, lwd=2)
+text(40, .9, "2015", cex=1.5)
+
+afit <- survfit(Surv(month, status) ~ number.organs, amyloid)
+plot(afit, lty=1:4, col=1:4, lwd=2, xlab="month", ylab="survival")
+text(90, .9, "Validation\n2003 - 15", cex=1.5)
+par(opar)
+```
+
+# Concordance
+$$ P(y_i > y_j | \hat y_i > \hat y_j) = P(\hat y_i > \hat y_j | y_i > y_j) $$
+
+ * $\hat y$ can be any of (deaths, prob, sojourn, $X\beta$) and get the
+  same answer (for a Cox model)
+ * $X\beta$ does not need the intercept (baseline hazard)
+ * Math
+   - $\tau_a$, $\tau_b$, $\gamma$, Somers' $d$ are [-1, 1], differ in ties
+   - C = (d+1)/2
+   - If $y$ is 0/1 then C = AUROC
+   
+--- 
+
+The numerator of $C$ can be written as
+$$ \sum_i \delta_i  w(t) (r_i(t) - \overline r(t)) $$
+
+* w(t) = 1: log-rank test
+* w(t)= n(t): Gehan-Wilcoxon test, Harrell C
+* w(t)= S(t): Peto-Wilcoxon test
+* w(t)= S(t)/G(t): Schemper test, Uno C
+* ...
+
+---
+
+```{r, breastC}
+
+tau2 <- seq(1, 7, length=151)
+reweight <- rttright(Surv(ryear, rfs) ~ 1, gbsg2, times=tau2)
+
+Cstat <- array(0, dim=c(151,2,5)) # value and std, 4 measures
+for (i in 1:151) {
+    c1 <- concordance(rfit1, newdata=gbsg2, ymax=tau2[i])
+    c2 <- concordance(rfit1, newdata=gbsg2, ymax=tau2[i], timewt="S/G")
+    ytau <- with(gbsg2,ifelse(rfs==1 & ryear <= tau2[i], 1, 0))
+    c3 <- concordance(ytau ~ eta1, data=gbsg2, weight=reweight[,i],
+                      subset=(reweight[,i] > 0))
+    c4 <- concordance(rfit1, ymax=tau2[i])
+    Cstat[i,,1] <- c(coef(c1), sqrt(vcov(c1)))
+    Cstat[i,,2] <- c(coef(c2), sqrt(vcov(c2)))
+    Cstat[i,,3] <- c(coef(c3), sqrt(vcov(c3)))
+    Cstat[i,,4] <- c(coef(c4), sqrt(vcov(c4)))
+}
+bfit <- brier(rfit1, newdata=gbsg2, times=tau2)
+Cstat[,1,5] <- (1+ sqrt(bfit$rsquare))/2
+
+matplot(tau2, Cstat[,1, c(1,2,4)], lwd=2, lty=1, col=1:5, type='l', 
+        ylim=c(.6, .75),
+        xlab="Cutoff time tau", ylab="C")
+legend(3, .75, c("n(t) GBSG", "S/G GBSG", "n(t) Rotterdam"),
+       lwd=2, lty=1, col=1:5, bty='n', cex=1.1)
+```
+
+# Dichotomized concordance
+ * Use $I(t_i \le \tau)$ rather then $t_i$ as the response
+ * Does not estimate the same quantity
+ * Need to replace censored before $\tau$ using RTTR
+
+---
+
+```{r, c2}
+opar <- par(mfrow=c(1,2), mar=c(5,5,1,1))
+matplot(tau2, Cstat[,1,-4], lwd=2, lty=1, col=1:5, type='l', ylim=c(.6, .8),
+        xlab="Cutoff time tau", ylab="C")
+legend(1, .8, c("n(t) wt", "S/G weight", "DC", "(R+1)/2"),
+       lwd=2, lty=1, col=1:5, bty='n', cex=.8)
+matplot(tau2, Cstat[,2,-5], lwd=2, lty=1, col=1:4, type='l', 
+        ylim=c(0, max(Cstat[,2,])),
+        xlab="Cutoff time tau", ylab="std(C)")
+legend(1, .07, c("default wt", "S/G weight", "DC", "Rotterdam"),
+       lwd=2, lty=1, col=1:4, bty='n')
+par(opar)
+```
+
+# SMR
+ * R code
+  - data2$expect <- predict(coxfit1, type="expected", newdata=data2)
+  - glm(status ~ offset(log(expect)), poisson, data=data2)
+ * exp(intercept) = SMR
+ * valid estimates, std, CI
+ * add eta to the predictors for regression calibration
+ 
+---
+
+```{r, smr1}
+gbsg2$expect1 <- predict(rfit1, type='expected', newdata=gbsg2)
+gbsg2$expect2 <- predict(rfit2, type='expected', newdata=gbsg2)
+gbsg3$expect3 <- predict(rfit3, type='expected', newdata=gbsg3)
+
+temp <- c(with(gbsg2, c(sum(rfs), sum(expect1), sum(expect2))),
+          sum(gbsg3$expect3))
+temp2 <- rbind(rep(temp[1], 3), temp[2:4])
+temp2 <- rbind(temp2, temp2[1,]/temp2[2,])
+dimnames(temp2) <- list(c("Observed", "Expected", "O/E"), paste("Model", 1:3))
+round(temp2, 2)
+
+
+gfit1 <- glm(rfs ~ offset(log(expect1)), poisson, gbsg2, subset=(expect1 > 0))
+gfit2 <- glm(rfs ~ offset(log(expect2)), poisson, gbsg2, subset=(expect2 > 0))
+gfit3 <- glm(rfs ~ offset(log(expect3)), poisson, gbsg3, subset=(expect3 > 0))
+
+tfun <- function(fit) coef(fit) + c(0, -1.96, 1.96)*c(sqrt(vcov(fit)))
+temp3 <- cbind(tfun(gfit1), tfun(gfit2), tfun(gfit3))
+dimnames(temp3) <- list(c("SMR", "lower CI", "upper CI"), paste("Model", 1:3))
+round(exp(temp3), 2)
+```
+
+---
+
+```{r, overtime}
+tau <- seq(.2, 7.3, length=200)
+oe <- matrix(0, length(tau), 2)
+tdata <- gbsg2
+for (i in 1:nrow(oe)) {
+    tdata$ryear <- pmin(gbsg2$ryear, tau[i])
+    tdata$rfs <- ifelse(gbsg2$ryear>tau[i], 0, gbsg2$rfs)
+    pp <- predict(rfit2, newdata=tdata, type='expect')
+    oe[i,] <- c(sum(tdata$rfs), sum(pp))
+}
+opar <- par(mar=c(5,5,1,5))
+tfun <- function(x) (x-.3)* 300
+matplot(tau, cbind(oe, tfun(oe[,1]/oe[,2])), type='l', lty=1, 
+                   lwd=2, col=1:3,
+        xlab= "Cutoff time", ylab="Events")
+z <- seq(.4, 1.2, by=.2)
+axis(4, tfun(z), z, las=1)
+mtext("O/E", side=4, line=2, las=1, padj= -3) # move it away from 0.8 axis label
+legend(4, 180, c("Observed", "Expected (model 2)", "Observed/Expected"),
+       lty=1, lwd=2, col=1:3, bty='n')
+abline(h= tfun(c(1,1.2)), col='gray', lty=3)
+par(opar)
+```
+
+---
+
+# Survival models
+ * Get predicted survival curve, per subject, from the fitted model
+ * Overall prediction vs KM  (all time, all subjects)
+ * Per subject predictions at a given $\tau$, vs new per-subject predictions
+
+
+---
+
+```{r, surv1}
+directall <- survfit(rfit2, newdata=gbsg2)
+
+# collapse for plotting
+direct <- directall
+direct$surv <- rowMeans(direct$surv)
+# std does not collapse neatly, keep plot and summary from trying to use it
+direct$std.err <- direct$upper <- direct$lower <- direct$std.err <- NULL
+
+plot(gsurv, fun='event', lwd=c(2,1,1), 
+     xlab="Years since enrollment", ylab= "Death")
+lines(direct, fun='event', conf.int=F, lwd=2, col=2)
+legend(0, .6, c("Observed GBSG deaths", "Predicted"), col=1:2, lwd=2, bty='n')
+```
+
+---
+
+
+```{r, surv2, echo=TRUE}
+cfit1 <- coxph(Surv(ryear, rfs) ~ eta2, gbsg2)
+cfit1
+```
+
+---
+
+```{r, surv3}
+d2 <- survfit(cfit1, newdata=gbsg2)
+indx <- order(gbsg2$eta2) # need to be in eta order to draw lines
+yrs1 <-  findInterval(c(2,4,6), d2$time)
+yrs2 <-  findInterval(c(2,4,6), direct$time)
+temp1 <- t(d2$surv[yrs1,indx])   # Refit survival
+temp2 <- t(directall$surv[yrs2, indx]) # Predicted survival
+matplot(1-temp2, 1-temp1, type='l', lwd=2, col=1:3, lty=1, 
+        xlab="Model predicted death", ylab="Refit prediction")
+abline(0,1, lty=3)
+legend(.6, .3, c("At year 2", "At year 4", "At year 6"), lwd=2, lty=1, col=1:3)
+```
+
+---
+
+```{r, surv4}
+matplot(gbsg2$eta2[indx], 1- cbind(temp2, temp1), type='l', lwd=2,
+        lty=c(1,1,1,2,2,2), col=1:3, xlab="Linear Predictor",
+        ylab="Predicted Death Rates, across subjects")
+legend("topleft", outer(paste("Year", c(2,4,6)), 
+                        c("Prediction", "Refit"), paste),
+       lty=c(1,1,1,2,2,2), col= 1:3, lwd=2, bty='n')
+```
+
+
+# Binomial models
+ * Pick a time $\tau$
+ * Dichotomize the data
+ * $\hat p_i(\tau)$ = predictions from orignal model
+ * Direct (weighted)
+  - sensitivity, specificity, PPV, NPC
+  - AUROC
+ * Fit logistic regression models
+  - regression slope
+  - extra variables
+ * For GBSG
+    - same song, third verse
+    - larger variance
+
+# Multistate models
+  to be continued...
+
