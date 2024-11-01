@@ -24,9 +24,6 @@
 library(survival)
 library(knitr)
 suppressMessages(library(splines2))
-suppressMessages(library(survey))
-#library(survivalVignettes) # eventual source for the amyloid data
-load("data/amyloid.rda")  # temporary source
 
 opts_chunk$set(comment=NA, tidy=FALSE, highlight=FALSE, echo=TRUE,
                fig.width=6.5, fig.height=4, fig.path="figures/",
@@ -178,11 +175,12 @@ approaches.
 \begin{enumerate}
   \item Apply standard censored data methods to the validation data, and compare
     the results to the target model's predictions.  I will sometimes call this
-    the ``$\yhat$ vs $\yhat$'' approach.
+    the ``yhat vs yhat'' approach.
  \item Create uncensored data specific to a chosen assessment time $\tau$,
     then use standard methods for uncensored data. Two approaches are
     \begin{itemize}
-      \item Use the redistribut-to-the-right (RTTR) algorithm to reassign the 
+      \item Use the redistribut-to-the-right (RTTR, IPC) algorithm to reassign 
+        the 
         case weights of those observations censored prior to $\tau$ to others,
         resulting in a weighted subset who status at $\tau$ is known.
       \item Replace the response with pseudovalues at time $\tau$.
@@ -196,14 +194,16 @@ approaches.
     is closely related to standardized mortality ratios (SMR), a
     measure with a long history. 
   \item Ignore censoring. A disastrous approach, but one that sometimes 
-    appears in practice.
+    appears in practice. A common example would be assessment of 5 year
+    survival by comparing those dead before 5 to alive at 5 and simply
+    ignoring all those censored before 5.
 \end{enumerate}
 
 In summary, the validation of time-to-event data has three primary
 dimensions: choice of the appropriate summary statistic,
 the choice of a range or set of prediction times, and choice of a method
 for handling censoring.
-The first and two of these will be closely tied to application at hand,
+The first two of these will be closely tied to application at hand,
 the third is more technical.
 
 \section{Data}
@@ -246,7 +246,7 @@ I will use 3 models: the first using only menopausal status, size, nodes,
 and grade, a second adds nonlinear age, and a third using age as the time
 scale.
 
-<<gbsg2>>=
+<<gbsg2, fig.caption="Spline fit for number of nodes, Rotterdam">>=
 rfit <- coxph(Surv(ryear, rfs) ~ meno + size + grade + pspline(nodes), rott2)
 print(rfit, digits=1)
 
@@ -429,15 +429,23 @@ text(40, .9, "2015", cex=1.5)
 
 afit <- survfit(Surv(month, status) ~ number.organs, amyloid)
 plot(afit, lty=1:4, col=1:4, lwd=2, xlab="month", ylab="survival")
-text(80, .9, "Validation", cex=1.5)
+text(90, .9, "Validation\n2003 - 15", cex=1.5)
 par(opar)
 @ 
 
-This data is different in that a survival model does not directly appear.
+This data is different in that a survival model does not directly appear,
+only the predicted category for each subject.
 Cox models were used in some of the work to help motivate the categorical
 staging variables and their cutoffs, but is not used in the final score. 
-(The hematologists' in question firmly believe that
+(The hematologists' firmly believe that
 physicians ``will not understand'' a continuous score.)
+
+The 2002, 2012 and 2015 predictions differ substantially, particularly for
+the lowest risk goup (there are over 50 subjects and 0 deaths in the top
+2015 curve). 
+This represents an era where several new and effective treatments for
+amyloidosis became available.  Any validation exercise will need to be cognisant
+of that.
 
 \subsection{Treatment trial in Primary Biliary Cirrhosis}
 The model and data underlying a risk score and predicted survival representing
@@ -479,6 +487,8 @@ udca2$pstat <- ifelse (temp, 1, 0)
 udca2$eta   <- predict(pbcfit2, newdata=udca2)
 udca2$expect<- predict(pbcfit2, newdata=udca2, type="expected")
 udca2 <- subset(udca2, !is.na(riskscore))
+pcount <- with(udca, 1*is.na(death.dt) + 1*is.na(tx.dt) + 1*is.na(hprogress.dt) 
+              + 1*is.na(varices.dt) + 1*is.na(enceph.dt) + 1*is.na(ascites.dt))
 @ 
 
 \subsection{Monoclonal gammopathy}
@@ -627,18 +637,21 @@ R^2 &= 1 - \frac{\sum_{i=1}^n w_i(\tau) \left[\delta_i - \phat_i(\tau)\right]^2}
           {\sum_{i=1}^n w_i(\tau) \left[\delta_i - p_0(\tau)\right]^2} \\
     &= 1 - N/D
 \end{align*}
-where $w$ are the IPC weights, $\phat$ is the predicted probability of death
+where $\delta$ is the 0/1 status indicator for observed death before $\tau$,
+$w$ are the IPC weights, $\phat$ is the predicted probability of death
 based on the model, and $p_0$ is the result of fitting a null model with
 only an intercept.  The null model predicted probability of an event
 at time $\tau$ is simply 1- Kaplan-Meier($\tau$): one of the original
 arguments for the RTTR was that a weighted mean of the 0/1 status variable
 reprises the KM \cite{Efron67}.
+That is, a weighted logistic regression of $\delta$ using only the intercept 
+as a predictor will reprise the KM.
 The numerator $N$ is known as the Brier score. van Houwelingen and Putter
-\cite{vanHouwelingen12} is difficult to interpret without rescaling, since
+\cite{vanHouwelingen12} argue that $N$ is difficult to interpret without
+rescaling, since
 the error of the null model is very different for $p$ near .5 or near .9,
 and suggest xxx.  The ratio $N/D$ is called the index of prediction accuracy
-in \cite{Kattan18}.  We will use $R^2$ since, like $C$, it ranges from 0 to 1.
-
+in \cite{Kattan18}. 
 
 
 \subsection{Breast cancer}
@@ -670,26 +683,22 @@ for (i in 1:151) {
 bfit <- brier(rfit1, newdata=gbsg2, times=tau2)
 Cstat[,1,5] <- (1+ sqrt(bfit$rsquare))/2
 
-opar <- par(mfrow=c(1,2), mar=c(5,5,1,1))
-matplot(tau2, Cstat[,1,], lwd=2, lty=1, col=1:5, type='l', ylim=c(.6, .8),
+matplot(tau2, Cstat[,1, c(1,2,4)], lwd=2, lty=1, col=1:5, type='l', 
+        ylim=c(.6, .75),
         xlab="Cutoff time tau", ylab="C")
-legend(1, .8, c("n(t) wt", "S/G weight", "DTC", "Rotterdam", "(R+1)/2"),
+legend(3, .75, c("n(t) wt", "S/G weight", "Rotterdam"),
        lwd=2, lty=1, col=1:5, bty='n', cex=.8)
-matplot(tau2, Cstat[,2,], lwd=2, lty=1, col=1:4, type='l', 
-        ylim=c(0, max(Cstat[,2,])),
-        xlab="Cutoff time tau", ylab="std(C)")
-legend(1, .07, c("default wt", "S/G weight", "DTC", "Rotterdam"),
-       lwd=2, lty=1, col=1:4, bty='n')
-par(opar)
 @ 
+
 
 The plot is very interesting.
 \begin{itemize}
   \item For this particular data set pair, the discrimination of the model
     in the GBSG data set is not too far from its performance in the
-    Rotterdam data used to build the model; essentially identical at 7 years. 
+    Rotterdam data used to build the model, from year 3 forward
+    they differ by .01 to .02.
     At 4 years the values are .70 and .69, less than 1 std apart.
-    (The better performance before year 1.5 is an unexplained oddity.)
+    (The blip of better performance around year 1.5 is an unexplained oddity.)
   \item Concordance gets worse over time, which is not a surprise.
     Outcomes farther in the future are harder to predict in essentially all
     areas of life, survival time is no exception.
@@ -698,13 +707,31 @@ The plot is very interesting.
     remain close with a difference of approximately .01 at 4 years and .02 at
     6 years.  The $S/G$ weight can become quite large at later times, leading
     to more bounce in the estimate over time.
-  \item The DTC is larger, particularly at later times, but with substantially
-    larger variance at those later times.
 \end{itemize}
-  
-Why is the DTC variance so much larger? As $\tau$ increases the RTTR algorithm
-has set more and more observations' weight to zero: by time 6 354/686 = 52\%
-of them. The induced 0/1 variable has counts of 296 and 36; and we know that for
+
+Now add in the dichotmized measures.  For R-squared, we note that $|R|=0$ for
+no association but $C= 1/2$, plotting $(|R|+1)/2$ aligns the two.
+
+<<echo=FALSE>>=   
+opar <- par(mfrow=c(1,2), mar=c(5,5,1,1))
+matplot(tau2, Cstat[,1,-4], lwd=2, lty=1, col=1:5, type='l', ylim=c(.6, .8),
+        xlab="Cutoff time tau", ylab="C")
+legend(1, .8, c("n(t) wt", "S/G weight", "DC", "(R+1)/2"),
+       lwd=2, lty=1, col=1:5, bty='n', cex=.8)
+matplot(tau2, Cstat[,2,-5], lwd=2, lty=1, col=1:4, type='l', 
+        ylim=c(0, max(Cstat[,2,])),
+        xlab="Cutoff time tau", ylab="std(C)")
+legend(1, .07, c("default wt", "S/G weight", "DC", "Rotterdam"),
+       lwd=2, lty=1, col=1:4, bty='n')
+par(opar)
+@
+
+As expected the dichotomized concordance is larger. The amount variation 
+associated with small changes in $\tau$ is a consequece of the sharp transitions
+in weight from $>1$ to 0 when a censored observation is reassigned.
+Why is the DC variance grow so rapicly? As $\tau$ increases the RTTR algorithm
+has set more and more observations' weight to zero: by time 6 only 33/387 remain.
+The induced 0/1 variable has counts of 296 and 36; and we know that for
 binomial data the precision of an estimate is proportional to the smaller
 group.
 
@@ -731,14 +758,14 @@ for (i in 1:151) {
 }
 matplot(tau2, C2[,1,1:3], lwd=2, lty=1, col=1:4, type='l', ylim=c(.6, .86),
         xlab="Cutoff time tau", ylab="C")
-legend(1, .86, c("default wt", "S/G weight", "DTC", "Model 1"),
+legend(1, .86, c("default wt", "S/G weight", "DC", "Model 1"),
        lwd=2, lty=c(1,1,1,3), col=1:3, bty='n')
 matlines(tau2, Cstat[,1,1:3], lwd=2, lty=3, col='gray')
 @ 
 
 The concordance lines for model 1 have been added in gray. We see that model
 2 has essentially the same patterns, but higher discrimination: about .02
-at the 5 year mark. 
+units at the 5 year mark. 
 The plots doe not tell us \emph{which} $\tau$
 cutoff to use, that has to be decided based on the goals of the validation
 study.  
@@ -806,7 +833,7 @@ contrast <- function(cmat, fit) {
 
 contrast(rbind(c1.2= c(-1,1,0,0,0), c1.3= c(-1,0,1,0,0), c1.4= c(-1,0,0,1,0), 
                c1.5= c(-1,0,0,0,1), c2.3= c(0,1,-1,0,0), c2.4= c(0,-1,0,1,0),
-               c2.5= c(0,-1,0,0,1)), cfit)
+               c2.5= c(0,-1,0,0,1), c4.5=c(0,0,0,-1,1)), cfit)
 @ 
 
 It appears that all are significantly different from the simple count, and
@@ -1425,18 +1452,18 @@ legend("topleft", c("difference", "diff/mean","logit", "cloglog"),
 The raw difference between observed and predicted survival increases with time,
 which is what we would expect if there is a systematic shortcoming in the
 prediction model.
-Statisticians often pick a scale where effects will be more constant over time
-and effects will be additive (though if we are honest, the transform is normally
-chosen purely for convenience and without thought).
-The scaled difference, complimentary log-log and logit have some success
+Statisticians often pick a scale where effects will additive and approximately
+ constant over time (though if we are honest, the transform is normally 
+chosen purely for convenience).
+Both the complimentary log-log and logit have some success wrt this metric
 over the inteval from 2.5 to 5 years, though the discontinuous weighting
 process adds a lot of noise: 
 as $\tau$ moves from left to right a censored observation's weight slowly 
 increases and then abruptly drops to zero.
 
 Do binomial analysis with a cutoff of $\tau= 5$ years.
-Normally, the logistic link is used without thought, but the $\eta$ value
-from a Cox model is consistent with the cloglog link. 
+Normally, users default to a logistic link, but the $\eta$ value
+from a Cox model is consistent with the cloglog link so we use the latter. 
 
 <<rttrbreast>>=
 tau <- 5
