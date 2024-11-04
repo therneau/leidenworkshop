@@ -411,7 +411,7 @@ plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel,
 for (i in 1:2)
     lines(survival ~ month, data=amyloidmodel, subset=(study==2004 & stage==i),
           col= i+1, lwd=2)
-text(40, .9, "2002", cex=1.5)
+text(40, .9, "2004", cex=1.5)
 
 plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel,
      type='l', subset= (study==2012 & stage==0))
@@ -429,23 +429,23 @@ text(40, .9, "2015", cex=1.5)
 
 afit <- survfit(Surv(month, status) ~ number.organs, amyloid)
 plot(afit, lty=1:4, col=1:4, lwd=2, xlab="month", ylab="survival")
-text(90, .9, "Validation\n2003 - 15", cex=1.5)
+text(90, .9, "Validation\n2004 - 15", cex=1.5)
 par(opar)
 @ 
 
-This data is different in that a survival model does not directly appear,
+This data is different in that a Cox model does not directly appear,
 only the predicted category for each subject.
 Cox models were used in some of the work to help motivate the categorical
 staging variables and their cutoffs, but is not used in the final score. 
-(The hematologists' firmly believe that
-physicians ``will not understand'' a continuous score.)
+(The hematologists firmly believe that a discrete score such as this
+is much easier for the practioner to use.)
 
-The 2002, 2012 and 2015 predictions differ substantially, particularly for
-the lowest risk goup (there are over 50 subjects and 0 deaths in the top
+The 2004, 2012 and 2015 predictions differ substantially, particularly for
+the lowest risk goup (there are 70 subjects and 0 deaths in the top
 2015 curve). 
-This represents an era where several new and effective treatments for
+This data spans a time when several new and effective treatments for
 amyloidosis became available.  Any validation exercise will need to be cognisant
-of that.
+of this.
 
 \subsection{Treatment trial in Primary Biliary Cirrhosis}
 The model and data underlying a risk score and predicted survival representing
@@ -666,8 +666,9 @@ $t_i$ and $t_j$ greater than 4 as tied.
 <<gbsg5, fig.caption="C statistics versus truncation time using predictions from the Rotterdam model, for Rotterdam and GBSG data sets.">>=
 tau2 <- seq(1, 7, length=151)
 reweight <- rttright(Surv(ryear, rfs) ~ 1, gbsg2, times=tau2)
+psmat <- 1- pseudo(gsurv, times=tau2)
 
-Cstat <- array(0, dim=c(151,2,5)) # value and std, 4 measures
+Cstat <- array(0, dim=c(151,2,6)) # value and std, 5 measures
 for (i in 1:151) {
     c1 <- concordance(rfit1, newdata=gbsg2, ymax=tau2[i])
     c2 <- concordance(rfit1, newdata=gbsg2, ymax=tau2[i], timewt="S/G")
@@ -675,13 +676,15 @@ for (i in 1:151) {
     c3 <- concordance(ytau ~ eta1, data=gbsg2, weight=reweight[,i],
                       subset=(reweight[,i] > 0))
     c4 <- concordance(rfit1, ymax=tau2[i])
+    c5 <- concordance(psmat[,i] ~ eta1, data=gbsg2, ymax=tau2[i])
     Cstat[i,,1] <- c(coef(c1), sqrt(vcov(c1)))
     Cstat[i,,2] <- c(coef(c2), sqrt(vcov(c2)))
     Cstat[i,,3] <- c(coef(c3), sqrt(vcov(c3)))
     Cstat[i,,4] <- c(coef(c4), sqrt(vcov(c4)))
+    Cstat[i,,5] <- c(coef(c5), sqrt(vcov(c5)))
 }
 bfit <- brier(rfit1, newdata=gbsg2, times=tau2)
-Cstat[,1,5] <- (1+ sqrt(bfit$rsquare))/2
+Cstat[,1,6] <- (1+ sqrt(bfit$rsquare))/2
 
 matplot(tau2, Cstat[,1, c(1,2,4)], lwd=2, lty=1, col=1:5, type='l', 
         ylim=c(.6, .75),
@@ -710,30 +713,41 @@ The plot is very interesting.
 \end{itemize}
 
 Now add in the dichotmized measures.  For R-squared, we note that $|R|=0$ for
-no association but $C= 1/2$, plotting $(|R|+1)/2$ aligns the two.
+no association while $C= 1/2$ for no association,
+plotting $(|R|+1)/2$ aligns the two.
 
 <<echo=FALSE>>=   
 opar <- par(mfrow=c(1,2), mar=c(5,5,1,1))
-matplot(tau2, Cstat[,1,-4], lwd=2, lty=1, col=1:5, type='l', ylim=c(.6, .8),
+matplot(tau2, Cstat[,1,-4], lwd=2, lty=1, col=1:5, type='l', ylim=c(.55, .8),
         xlab="Cutoff time tau", ylab="C")
-legend(1, .8, c("n(t) wt", "S/G weight", "DC", "(R+1)/2"),
+legend(2, .8, c("n(t) wt", "S/G weight", "DC", "(R+1)/2", "pseudovalue C"),
        lwd=2, lty=1, col=1:5, bty='n', cex=.8)
-matplot(tau2, Cstat[,2,-5], lwd=2, lty=1, col=1:4, type='l', 
+matplot(tau2, Cstat[,2,-6], lwd=2, lty=1, col=1:5, type='l', 
         ylim=c(0, max(Cstat[,2,])),
         xlab="Cutoff time tau", ylab="std(C)")
-legend(1, .07, c("default wt", "S/G weight", "DC", "Rotterdam"),
-       lwd=2, lty=1, col=1:4, bty='n')
+legend(1, .07, c("n(t) weight", "S/G weight", "DC", "Rotterdam", 
+                 "pseudovalue C"),
+       lwd=2, lty=1, col=1:5, bty='n')
 par(opar)
 @
 
-As expected the dichotomized concordance is larger. The amount variation 
-associated with small changes in $\tau$ is a consequece of the sharp transitions
+As expected the dichotomized concordance is larger. The amount of variation 
+associated with small changes in $\tau$ is, we presume,
+ a consequece of the sharp transitions
 in weight from $>1$ to 0 when a censored observation is reassigned.
-Why is the DC variance grow so rapicly? As $\tau$ increases the RTTR algorithm
-has set more and more observations' weight to zero: by time 6 only 33/387 remain.
+Why does the DC variance grow so rapidly after 5 years? 
+As $\tau$ increases the RTTR algorithm
+has set more and more observations' weight to zero: by time 6 only 33/387 
+of the censored subjects remain.
 The induced 0/1 variable has counts of 296 and 36; and we know that for
 binomial data the precision of an estimate is proportional to the smaller
 group.
+A concordance based on pseudovalues uses all the pairs: two observations censored
+at diffent times will have different pseudovalues (if at least one event
+occurs in the interim).  The increase in the number of comparable pairs
+leads to a lower estimated variance.
+Due to its larger number of observations the estimated variance of $C$ for
+the Rotterdam data is the smallest.
 
 The IJ variance used by the \code{concordance} function also allows computation
 of a variance for the difference between any two of the methods.
@@ -750,13 +764,13 @@ for (i in 1:151) {
     temp <- with(gbsg2,ifelse(rfs==1 & ryear <= tau2[i], 1, 0))
     c3 <- concordance(temp~ eta2, data=gbsg2, weight=reweight[,i],
                       subset=(reweight[,i] > 0))
-    c4 <- concordance(rfit2, ymax=tau2[i]) # concordance of the training data
+    c4 <- concordance(psmat[,i] ~ eta2, data=gbsg2, ymax=tau2[i])
     C2[i,,1] <- c(coef(c1), sqrt(vcov(c1)))
     C2[i,,2] <- c(coef(c2), sqrt(vcov(c2)))
     C2[i,,3] <- c(coef(c3), sqrt(vcov(c3)))
     C2[i,,4] <- c(coef(c4), sqrt(vcov(c4)))
 }
-matplot(tau2, C2[,1,1:3], lwd=2, lty=1, col=1:4, type='l', ylim=c(.6, .86),
+matplot(tau2, C2[,1,1:4], lwd=2, lty=1, col=1:4, type='l', ylim=c(.5, .86),
         xlab="Cutoff time tau", ylab="C")
 legend(1, .86, c("default wt", "S/G weight", "DC", "Model 1"),
        lwd=2, lty=c(1,1,1,3), col=1:3, bty='n')
@@ -776,7 +790,7 @@ Using age as the time scale does not change the underlying computation for
 the concordance: for the death of observation $i$ at age $a_i$, the rank of
 $\eta_i$ is compared to that for all others which are alive and at risk at that 
 age.  The total number of comparable subjects at risk at any given moment is
-lower, however, leading to far fewer pairs and an increase in the 
+lower, however, leading to far fewer comparaible pairs and an increase in the 
 standard error.
 
 <<ageconcord>>=
@@ -807,13 +821,15 @@ one would define, even if there were no censoring.
 \subsection{Amyloid}
 Compare 5 different risk scores, of which a simple count of the number
 of affected organs is the most crude.
+Since several of the prediction models only extend to 60 months, use
+this as a limit.
 We see, that as expected, it has the lowest concordance with outcome, and
 the 2012, 2013 and 2015 modifications of the 2004 score do seem to give
 a slight improvemet.
 
 <<aconcord>>=
 cfit <- concordance(Surv(month, status) ~ number.organs + r2004 + r2012 + 
-                        r2013 + r2015, amyloid, reverse=TRUE)
+                        r2013 + r2015, amyloid, ymax=60, reverse=TRUE)
 cfit
 @
 
@@ -841,6 +857,8 @@ that the final two improve on the 2004 score.
 
 \subsection{UDCA treatment}
 For this data the concordance is not of primary interest. 
+The concordance is very high for prediction of death, however, and
+moderately strong for prediction of progression.
 
 <<udcaconcord>>=
 concordance(Surv(time, death) ~ riskscore, udca2, reverse=TRUE)
@@ -938,14 +956,14 @@ par(opar)
 @ 
 
 The observed RFS events start out as less than expected for the first half
-year, then catch up by year 1, and slowly rise from 1.1 to 1.2 times expected
+year, catch up by year 1, and slowly rise from 1.1 to 1.2 times expected
 from year 2--7. 
 We have not yet made the crucial decision about the time period of interest.
 Do we want to know about predictive behavior over the first year, first 2 years,
 first 5?  The correct answer depends of course on the application at hand.
 This data set pair has been widely used for dicussion of validation, and most
-of those papers have chosen 5 years without any explicit argument for that
-time point. 
+of those papers have chosen 5 years without presenting an explicit argument 
+for that time point. 
 In order to facilitate doing validation over the range of 0--5 years,
 add 3 more variables to the gbsg2 dataset: ryear5, rfs5, and expect5.
 
@@ -967,10 +985,10 @@ The next level of assessment is to look at the exess as a function of
 the prediction, known as a calibration plot.
 The predict call below uses expect=1 to get the death rate relative to an 
 ideal of 1.0, which would represent a perfect match to the predicted events. 
-We have added ahorizontal lines at the overall excess.
+We have added a horizontal line at the overall excess.
 In this case, the excess does not appear to be related to the per-subject
 risk, e.g., it is not limited to the highest or lowest risk subjects.
-The hint of a drop near the left is only a hint, at no point does the
+The hint of a rise near the left is only a hint, at no point does the
 95\% pointwise confidence band exclude the overall value of 1.2.
 A scaled density of the eta values is has been added to the bottom.
 There are a 60 subjects with $\eta < -.5$ but only 12 events.
@@ -994,7 +1012,7 @@ abline(h=.5, lty=2, col='gray')
 
 We can also divide the predicted risk score \code{eta} into bins to create a
 tableau reminiscent of the Hosmer-Lemishow approach in binomial data.
-In this case we lack any formal justfication for treating the last row as
+In this case we lack any formal justfication for treating the last row below as
 components of a chi-square statistic.
 
 <<gfit3>>=
@@ -1008,13 +1026,22 @@ round(counts,2)
 @ 
 
 If we repeat the plot for 5 year data there is no substantive change. If
-we use the termplot function below, which centers curves at the grand mean,
-the horizontal line at 0 is equivalent to one at the SMR on the uncentered plot.
+we use the termplot function below, the curve is centered at the grand mean
+so we draw the horizontal line at zero.
 
 <<gfit5b>>=
-termplot2(gfit2b, se=TRUE)
+termplot2(gfit2b, se=TRUE, 
+          xlab="Linear predictor", ylab="Relative excess hazard")
 abline(0,0, col='gray')
 @ 
+
+The astute reader will notice that the confidence intervals from the
+termplot call are a bit narrower.
+This is because the termplot result can ignore uncertainty in the
+intercept.  It is a plot of relative excess rather than absolute
+excess; one can argue that it is asking a discrimination rather
+than a formal calibration question.  
+(Said argument is a perhaps rather fussy semantics.)
 
 A next step is to look at components of the risk score.
 \begin{itemize}
@@ -1022,10 +1049,10 @@ A next step is to look at components of the risk score.
   \item Because the GBSG data set has subjects who are grade 1--3 while the 
     Rotterdam data had only 2--3, a second fit looks at the three grades
     separately.  Grade was modeled as an integer, and the pattern of excess
-    risk coefficients suggests that perhaps the 1-2 increment in risk is in
-    actuality larger than the 2-3 increment. (Model rfit2 has overestimated risk
-    for grade 1 and underestimated for grade 2).  The overall ANOVA suggests
-    that this could be random variation, however.
+    risk coefficients suggests that perhaps the 1-2 increment in risk is
+    larger than the 2-3 increment. (Has model rfit2 has overestimated risk
+    for grade 1 and underestimated for grade 2?)  The overall ANOVA suggests
+    that this could simply be random variation, however.
   \item A similar check is made for the three size categories. The medium
     group, which has 66\% of the cases, is almost identical to the overall:
     exp(.186)= 1.204.  There is a hint of a trend, but neither the ANOVA or
@@ -1091,17 +1118,26 @@ the last plot above.  Come back to this later
 
 
 \subsection{Amyloidosis}
-To compute expected events under the models we need the cumulative hazard,
-for which -log(survival) is an estimate, \emph{unless} the estimated survival
-is zero.
+To compute expected events under the models we need the cumulative hazard
+$\Lambda(t)$.
+The Kaplan-Meier is not exactly $\exp(\Lambda)$, but as long as the KM is
+not near 0, -log(KM) is close.  We use a simple threshold of .05 below.
+Since most of the predictions only go out to 5 years, it is important
+to only compute expected and observed deaths over that window.
+
 
 <<amexpect>>=
+amyloid2 <- amyloid
+amyloid2$month60 <- with(amyloid, pmin(month, 60))
+amyloid2$status60 <- with(amyloid, ifelse(month>60, 0, status))
+
 efun <- function(vtime, ttime, tsurv) {
     # vtime: fu time of the validation subject
     # ttime, tsurv, survival curves from the fitted model
-    chaz <- -log(pmax(.01, tsurv)) # stop infinity
+    chaz <- -log(pmax(.05, tsurv)) # stop infinity
     expect <- double(length(vtime))
     z <-approx(ttime, chaz, vtime, rule=2)$y
+    z
 }
 
 # Create a matrix of expected, one row per subject, one col per model
@@ -1109,37 +1145,73 @@ efun <- function(vtime, ttime, tsurv) {
 amexpect <- matrix(0, nrow(amyloid), 3)
 years <- c(2004, 2012, 2015)
 for (i in 1:3) {
-    tdata <- subset(amyloid.surv, study == years[i])
+    tdata <- subset(amyloidmodel, study == years[i])
     vstage <- get(paste0('r', years[i]), amyloid)
     for (stage in unique(vstage, na.rm=T)) {
         indx1 <- which(vstage== stage)
         indx2 <- which(tdata$stage == stage)
 cat(i,stage, "  ")
-        amexpect[indx1, i] <- efun(amyloid$month[indx1], tdata$month[indx2],
+        amexpect[indx1, i] <- efun(amyloid2$month60[indx1], tdata$month[indx2],
                                    tdata$survival[indx2])
     }
 }
 colnames(amexpect)<-years
 round(colSums(amexpect), 2)
-sum(amyloid$status)   
+sum(amyloid2$status60)   
 @ 
 
-The total deaths in the amloidosis validation data set is 583, while expected
-counts are 1670, 893 and 599 for the 2004, 2012 and 2105 predictions.
-The underlying reason is major gains in the treatment of AL amyloidosis over
-that span of years. This leaves a set of models with very similar discrimination
+The total deaths in the amloidosis validation data set at 5 years is 583, 
+while expected
+counts are 1487, 989 and 505 for the 2004, 2012 and 2105 predictions.
+The primary problem with this comparison is that it is naive.  Look again
+at the earlier graph.
+
+<<reprise, echo=FALSE>>=
+opar <- par(mfrow=c(2,2), mar=c(5,5,1,1))
+plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel,
+     type='l', subset= (study==2004 & stage==0))
+for (i in 1:2)
+    lines(survival ~ month, data=amyloidmodel, subset=(study==2004 & stage==i),
+          col= i+1, lwd=2)
+text(40, .9, "2004", cex=1.5)
+
+plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel,
+     type='l', subset= (study==2012 & stage==0))
+for (i in 1:3)
+    lines(survival ~ month, data=amyloidmodel, subset=(study==2012 & stage==i),
+          col= i+1, lwd=2)
+text(40, .9, "2012", cex=1.5)
+
+plot(survival~ month, ylim=c(0,1), lwd=2, data=amyloidmodel, col=4,
+     type='l', subset= (study==2015 & stage==3))
+for (i in 0:2)
+    lines(survival ~ month, data=amyloidmodel, subset=(study==2015 & stage==i),
+          col= i+1, lwd=2)
+text(40, .9, "2015", cex=1.5)
+
+afit <- survfit(Surv(month, status) ~ number.organs, amyloid)
+plot(afit, lty=1:4, col=1:4, lwd=2, xlab="month", ylab="survival")
+text(90, .9, "Validation\n2004 - 15", cex=1.5)
+par(opar)
+@ 
+
+As stated earler, there were major gains in the treatment of AL amyloidosis
+ over this span of years.
+This leaves a set of models with very similar discrimination
 but wildly different calibration.
-A natural next step would be to look within stage to see where the gains have
-been greatest or least.
+Group the validation data set by enrollment year.
+
+<<amyear>>=
+yrgroup <- cut(amyloid$year, c(2004, 2007, 2011, 2015), include.lowest=TRUE)
+table(yrgroup)
+temp <- cbind(observed= tapply(amyloid2$status60, yrgroup, sum),
+              rowsum(amexpect, yrgroup))
+@ 
 
 A formal test using glm runs into an issue, however, in that the 2015 reference
 has 0 deaths in stage 0, while the amyloid data has 51/199 deaths in that stage.
-This leads to 1*log(0) in the Poisson loglikelihood for such subjects: with
-a poisson rate of 0 deaths have likelihood 0.
-In fact, the observed count above should be modified to only count deaths
-within the time span of the prediction model. 
-It is actually unusual to have validation data with a longer time span than
-the prediction model.
+This leads to 1*log(0) in the Poisson loglikelihood for such subjects: observed
+deaths are (statistically) impossible when the true rate is 0.
 
 \subsection{UDCA}
 First, look at observed and expected events.
@@ -1312,7 +1384,7 @@ prediction models.  It is easiest to do by stage.
 asurv15 <- survfit(Surv(month, status) ~ r2015, amyloid)
 plot(asurv15, col=1:4, lwd=2, xlab="Months", ylab="Survival")
 for (i in 0:3) {
-    temp <- subset(amyloid.surv, stage==i & study== 2015)
+    temp <- subset(amyloidmodel, stage==i & study== 2015)
     lines(temp$month, temp$survival, lwd=2, col=i+1, lty=2)
 }
 legend("topright", paste("Stage", 0:3), lty=1, col=1:4, bty='n')
